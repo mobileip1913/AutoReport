@@ -1,0 +1,74 @@
+<!-- 取数配置弹窗（mapping_modal.js） -->
+<div id="mappingModal" class="fixed inset-0 z-50 hidden opacity-0 transition-opacity duration-200 ease-out">
+  <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" data-close></div>
+  <div id="mappingPanel" class="absolute inset-4 md:inset-auto md:top-8 md:left-1/2 md:-translate-x-1/2 md:w-[920px] md:max-h-[90vh] bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ease-out scale-95 origin-top">
+    <div class="px-6 py-4 border-b flex items-center justify-between bg-slate-50">
+      <div class="min-w-0">
+        <h2 id="modalTitle" class="text-lg font-bold">配置取数行</h2>
+        <p id="modalSubtitle" class="text-xs text-slate-500 mt-0.5 truncate"></p>
+      </div>
+      <button type="button" data-close class="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-6 py-4">
+      <div id="newMappingFields" class="hidden grid md:grid-cols-2 gap-4 mb-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">数据源</label>
+          <select id="newDataSource" class="w-full border rounded-lg px-3 py-2 text-sm">
+            {% for ds in modal_data_sources %}
+            <option value="{{ ds.id }}">{{ ds.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">关联逻辑字段（可选）</label>
+          <select id="newLogicalField" class="w-full border rounded-lg px-3 py-2 text-sm">
+            <option value="">— 不关联 —</option>
+            {% for f in modal_fields %}
+            <option value="{{ f.id }}">{{ f.name }} ({{ f.code }})</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="grid md:grid-cols-3 gap-3 mb-4">
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">指标名称</label>
+          <input id="mappingLabel" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="如：实际支付金额">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">分组</label>
+          <input id="mappingGroup" type="text" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="如：订单情况">
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-slate-600 mb-1">排序</label>
+          <input id="mappingSort" type="number" class="w-full border rounded-lg px-3 py-2 text-sm" value="0">
+        </div>
+      </div>
+      <div class="mb-4">
+        <label class="block text-xs font-medium text-slate-600 mb-1">说明（可选）</label>
+        <input id="mappingDesc" type="text" class="w-full border rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div class="mb-4" id="mappingDateSection">
+        <label class="block text-xs font-medium text-slate-600 mb-1">本规则日期列（默认与日期主表一致）</label>
+        <p class="text-[10px] text-slate-400 mb-2">日期主表在「报表配置」页设置；此处可为本规则单独指定日期列，留空则继承主表日期列。</p>
+        <div class="flex items-center gap-2">
+          <div class="flex-1 min-w-0"><span class="text-[10px] text-slate-400">来源文件</span><div class="g-date-file-combo"></div></div>
+          <div class="flex-1 min-w-0"><span class="text-[10px] text-slate-400">Sheet</span><div class="g-date-sheet-combo"></div></div>
+          <div class="flex-[1.2] min-w-0"><span class="text-[10px] text-slate-400">日期列</span><div class="g-date-col-combo"></div></div>
+        </div>
+      </div>
+      <div class="mb-2"><h3 class="font-semibold text-sm">取数来源</h3></div>
+      <div id="partsContainer" class="space-y-2"></div>
+      <div class="mt-2 grid grid-cols-2 gap-2">
+        <button type="button" id="btnAddPart" class="py-2 border-dashed border-sky-200 rounded-lg text-sm text-link hover:bg-sky-50/50">+ 添加来源组</button>
+        <button type="button" id="btnAddFieldRef" class="py-2 border-dashed border-teal-200 rounded-lg text-sm aux-text hover:bg-teal-50/50">⊕ 已有字段复用</button>
+      </div>
+    </div>
+    <div class="px-6 py-4 border-t bg-slate-50 flex justify-between">
+      <button type="button" id="btnDeleteMapping" class="hidden px-4 py-2 text-red-600 border border-red-200 rounded-lg text-sm hover:bg-red-50">删除</button>
+      <div class="ml-auto flex gap-2">
+        <button type="button" data-close class="px-4 py-2 border rounded-lg text-sm">取消</button>
+        <button type="button" id="btnSaveMapping" class="btn-primary px-5 py-2 text-sm">保存</button>
+      </div>
+    </div>
+  </div>
+</div>

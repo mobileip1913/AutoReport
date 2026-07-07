@@ -1,23 +1,33 @@
 import json
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
+    Account,
+    AccountStore,
     DataImport,
     DataSource,
     FieldMapping,
     LogicalField,
-    MappingLog,
     ReportRun,
     ReportTemplate,
     ReportValue,
+    Store,
     TemplateLine,
     TemplateStatus,
 )
+from app.services.account_context import (
+    ACCOUNT_COOKIE,
+    STORE_COOKIE,
+    assert_data_source_access,
+    page_context,
+    stores_for_account,
+)
+from app.services.mapping_utils import part_rule_hints
 from app.services.report_engine import generate_report, generate_report_for_data_source
 from app.services.schema import get_all_meta
 from app.services.timezone import to_cst
@@ -25,24 +35,58 @@ from app.services.timezone import to_cst
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["cst"] = to_cst
+templates.env.filters["part_rule_hints"] = part_rule_hints
+
+
+def _render(name: str, request: Request, db: Session, **ctx):
+    return templates.TemplateResponse(name, {"request": request, **page_context(request, db), **ctx})
+
+
+@router.post("/demo/switch-account")
+def switch_demo_account(
+    account_id: int = Form(...),
+    next_url: str = Form("/mappings"),
+    db: Session = Depends(get_db),
+):
+    account = db.query(Account).filter(Account.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    stores = stores_for_account(db, account.id)
+    target = next_url if next_url.startswith("/") else "/mappings"
+    resp = RedirectResponse(url=target, status_code=303)
+    resp.set_cookie(ACCOUNT_COOKIE, str(account.id), max_age=60 * 60 * 24 * 30)
+    if stores:
+        resp.set_cookie(STORE_COOKIE, str(stores[0].id), max_age=60 * 60 * 24 * 30)
+    return resp
+
+
+@router.post("/demo/switch-store")
+def switch_demo_store(
+    request: Request,
+    store_id: int = Form(...),
+    next_url: str = Form("/mappings"),
+    db: Session = Depends(get_db),
+):
+    from app.services.account_context import resolve_current_account
+
+    account = resolve_current_account(request, db)
+    store = (
+        db.query(Store)
+        .join(AccountStore, AccountStore.store_id == Store.id)
+        .filter(Store.id == store_id, AccountStore.account_id == account.id)
+        .first()
+    )
+    if not store:
+        raise HTTPException(status_code=403, detail="当前账号无权访问该店铺")
+    target = next_url if next_url.startswith("/") else "/mappings"
+    resp = RedirectResponse(url=target, status_code=303)
+    resp.set_cookie(STORE_COOKIE, str(store.id), max_age=60 * 60 * 24 * 30)
+    return resp
 
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
-    templates_list = db.query(ReportTemplate).order_by(ReportTemplate.updated_at.desc()).all()
-    recent_runs = db.query(ReportRun).order_by(ReportRun.created_at.desc()).limit(8).all()
-    recent_logs = db.query(MappingLog).order_by(MappingLog.created_at.desc()).limit(6).all()
-    data_sources = db.query(DataSource).all()
-    return templates.TemplateResponse(
-        "dashboard.html",
-        {
-            "request": request,
-            "templates_list": templates_list,
-            "recent_runs": recent_runs,
-            "recent_logs": recent_logs,
-            "data_sources": data_sources,
-        },
-    )
+    return _render("dashboard.html", request, db)
 
 
 @router.get("/templates", response_class=HTMLResponse)
@@ -96,31 +140,55 @@ def unpublish_template(template_id: int, db: Session = Depends(get_db)):
 
 @router.get("/mappings", response_class=HTMLResponse)
 def list_mappings(request: Request, db: Session = Depends(get_db)):
-    from app.services.mapping_utils import is_formula_line, mapping_label, mapping_line_code
+    from app.services.mapping_utils import is_formula_line, is_manual_line, mapping_label, mapping_line_code
+    from app.services.meichong_rules import PENDING_FILE_CODES
+
+    from sqlalchemy.orm import joinedload
+
+    ctx = page_context(request, db)
+    current_store = ctx["current_store"]
+    accessible_stores = ctx["accessible_stores"]
+    data_sources = [current_store.data_source] if current_store else ctx["accessible_data_sources"]
+    if data_sources:
+        ds_ids = [ds.id for ds in data_sources]
+        data_sources = (
+            db.query(DataSource)
+            .options(joinedload(DataSource.store))
+            .filter(DataSource.id.in_(ds_ids))
+            .all()
+        )
+    store_by_ds_id = {s.data_source_id: s for s in accessible_stores if s.data_source_id}
 
     mappings = (
         db.query(FieldMapping)
+        .filter(FieldMapping.data_source_id.in_([ds.id for ds in data_sources] or [0]))
         .order_by(FieldMapping.data_source_id, FieldMapping.sort_order, FieldMapping.id)
         .all()
     )
     fields = db.query(LogicalField).all()
-    data_sources = db.query(DataSource).all()
     meta = get_all_meta(db, data_sources)
     reuse_fields: dict[int, list[dict]] = {}
     for ds in data_sources:
         reuse_fields[ds.id] = [
-            {"code": mapping_line_code(m), "name": mapping_label(m)}
+            {
+                "code": mapping_line_code(m),
+                "name": mapping_label(m),
+                "mapping_id": m.id,
+                "configured": bool(m.parts or (m.sheet_name and m.column_header)),
+            }
             for m in mappings
-            if m.data_source_id == ds.id and not is_formula_line(m)
+            if m.data_source_id == ds.id and not is_formula_line(m) and not is_manual_line(m)
         ]
 
     grouped: dict[int, list[dict]] = {ds.id: [] for ds in data_sources}
     group_titles: dict[int, list[str]] = {ds.id: [] for ds in data_sources}
     auxiliary: dict[int, list[dict]] = {ds.id: [] for ds in data_sources}
+    excel_config: dict[int, list[dict]] = {ds.id: [] for ds in data_sources}
     for m in mappings:
         item = {
             "mapping": m,
             "is_formula": is_formula_line(m),
+            "is_manual": is_manual_line(m),
             "label": mapping_label(m),
             "line_code": mapping_line_code(m),
         }
@@ -135,55 +203,61 @@ def list_mappings(request: Request, db: Session = Depends(get_db)):
         item["group"] = title
         bucket.append(item)
 
-    return templates.TemplateResponse(
+    from app.services.daily_report import build_dynamic_report_rows, list_excel_templates
+    from app.services.ds_settings import serialize_ds_settings
+
+    excel_templates = list_excel_templates()
+
+    for ds in data_sources:
+        ds_mappings = [m for m in mappings if m.data_source_id == ds.id]
+        excel_config[ds.id] = build_dynamic_report_rows(
+            ds_mappings,
+            pending_file_codes=PENDING_FILE_CODES,
+            label_fn=mapping_label,
+            line_code_fn=mapping_line_code,
+            is_manual_fn=is_manual_line,
+            is_formula_fn=is_formula_line,
+        )
+
+    return _render(
         "mappings.html",
-        {
-            "request": request,
-            "mappings": mappings,
-            "grouped": grouped,
-            "group_titles": group_titles,
-            "auxiliary": auxiliary,
-            "fields": fields,
-            "data_sources": data_sources,
-            "meta_json": json.dumps(meta, ensure_ascii=False),
-            "reuse_fields_json": json.dumps(reuse_fields, ensure_ascii=False),
-        },
+        request,
+        db,
+        mappings=mappings,
+        grouped=grouped,
+        group_titles=group_titles,
+        auxiliary=auxiliary,
+        excel_config=excel_config,
+        fields=fields,
+        data_sources=data_sources,
+        accessible_stores=accessible_stores,
+        store_by_ds_id=store_by_ds_id,
+        excel_templates=excel_templates,
+        modal_stores=accessible_stores,
+        meta_json=json.dumps(meta, ensure_ascii=False),
+        reuse_fields_json=json.dumps(reuse_fields, ensure_ascii=False),
+        pending_file_codes=PENDING_FILE_CODES,
+        ds_settings_json=json.dumps({
+            ds.id: serialize_ds_settings(ds)
+            for ds in data_sources
+        }, ensure_ascii=False),
+        ds_settings={ds.id: serialize_ds_settings(ds) for ds in data_sources},
     )
 
 
 @router.get("/logs", response_class=HTMLResponse)
 def list_logs(request: Request, db: Session = Depends(get_db)):
-    logs = db.query(MappingLog).order_by(MappingLog.created_at.desc()).all()
-    return templates.TemplateResponse(
-        "logs.html",
-        {"request": request, "logs": logs},
-    )
+    return RedirectResponse(url="/mappings", status_code=303)
 
 
 @router.get("/reports", response_class=HTMLResponse)
 def list_reports(request: Request, db: Session = Depends(get_db)):
-    runs = db.query(ReportRun).order_by(ReportRun.created_at.desc()).all()
-    return templates.TemplateResponse(
-        "reports.html",
-        {"request": request, "runs": runs},
-    )
+    return RedirectResponse(url="/daily", status_code=303)
 
 
 @router.get("/reports/{run_id}", response_class=HTMLResponse)
 def report_detail(run_id: int, request: Request, db: Session = Depends(get_db)):
-    run = db.query(ReportRun).filter(ReportRun.id == run_id).first()
-    if not run:
-        raise HTTPException(status_code=404, detail="报表不存在")
-    values = (
-        db.query(ReportValue)
-        .filter(ReportValue.report_run_id == run_id)
-        .order_by(ReportValue.sort_order)
-        .all()
-    )
-    return templates.TemplateResponse(
-        "report_detail.html",
-        {"request": request, "run": run, "values": values},
-    )
+    return RedirectResponse(url=f"/daily?run_id={run_id}", status_code=303)
 
 
 @router.get("/daily", response_class=HTMLResponse)
@@ -192,40 +266,107 @@ def daily_report_page(
     run_id: int | None = None,
     db: Session = Depends(get_db),
 ):
-    from app.services.daily_report import build_grouped, report_meta
-    from app.services.meichong_rules import MEICHONG_TEMPLATE_NAME
+    from app.services.daily_report import build_dynamic_report_rows, report_meta
+    from app.services.ds_settings import serialize_ds_settings
+    from app.services.mapping_utils import is_formula_line, is_manual_line, mapping_label, mapping_line_code
+    from app.services.meichong_rules import MEICHONG_TEMPLATE_NAME, PENDING_FILE_CODES
+    from app.services.schema import get_all_meta
+
+    ctx = page_context(request, db)
+    daily_sources = [ds for ds in ctx["accessible_data_sources"] if ds.config]
 
     template = (
         db.query(ReportTemplate).filter(ReportTemplate.name == MEICHONG_TEMPLATE_NAME).first()
     )
-    daily_sources = [ds for ds in db.query(DataSource).all() if ds.config]
 
     run = None
-    groups = None
+    excel_rows = None
     meta = None
+    active_ds_id = None
+    meta_json = json.dumps(get_all_meta(db, daily_sources), ensure_ascii=False)
+    reuse_fields_json = "{}"
+    modal_data_sources = daily_sources
+    modal_fields = db.query(LogicalField).all()
+
     if run_id:
         run = db.query(ReportRun).filter(ReportRun.id == run_id).first()
-        if run:
-            values = (
-                db.query(ReportValue)
-                .filter(ReportValue.report_run_id == run_id)
-                .order_by(ReportValue.sort_order)
-                .all()
-            )
-            groups = build_grouped(values)
-            ds = db.query(DataSource).filter(DataSource.id == _run_source_id(db, run)).first()
-            meta = report_meta(ds, run) if ds else None
 
-    return templates.TemplateResponse(
+    if run:
+        active_ds_id = run.data_source_id or _run_source_id(db, run)
+    elif daily_sources:
+        active_ds_id = daily_sources[0].id
+
+    values = []
+    mappings = []
+    ds = None
+    if active_ds_id:
+        mappings = (
+            db.query(FieldMapping)
+            .filter(FieldMapping.data_source_id == active_ds_id)
+            .all()
+        )
+        ds = db.query(DataSource).filter(DataSource.id == active_ds_id).first()
+        if ds:
+            modal_data_sources = [ds]
+            meta_json = json.dumps(get_all_meta(db, [ds]), ensure_ascii=False)
+            reuse_fields_json = json.dumps({
+                ds.id: [
+                    {
+                        "code": mapping_line_code(m),
+                        "name": mapping_label(m),
+                        "mapping_id": m.id,
+                        "configured": bool(m.parts or (m.sheet_name and m.column_header)),
+                    }
+                    for m in mappings
+                    if not is_formula_line(m) and not is_manual_line(m)
+                ]
+            }, ensure_ascii=False)
+
+    if run:
+        values = (
+            db.query(ReportValue)
+            .filter(ReportValue.report_run_id == run.id)
+            .order_by(ReportValue.sort_order)
+            .all()
+        )
+        meta = report_meta(ds, run) if ds else None
+
+    excel_rows = None
+    if active_ds_id:
+        excel_rows = build_dynamic_report_rows(
+            mappings,
+            values if run else None,
+            pending_file_codes=PENDING_FILE_CODES,
+            label_fn=mapping_label,
+            line_code_fn=mapping_line_code,
+            is_manual_fn=is_manual_line,
+            is_formula_fn=is_formula_line,
+        )
+
+    ds_settings = {}
+    if active_ds_id and ds:
+        ds_settings = {ds.id: serialize_ds_settings(ds)}
+    elif daily_sources:
+        ds_settings = {d.id: serialize_ds_settings(d) for d in daily_sources}
+
+    return _render(
         "daily.html",
-        {
-            "request": request,
-            "template": template,
-            "daily_sources": daily_sources,
-            "run": run,
-            "groups": groups,
-            "meta": meta,
-        },
+        request,
+        db,
+        template=template,
+        daily_sources=daily_sources,
+        run=run,
+        excel_rows=excel_rows,
+        meta=meta,
+        active_ds_id=active_ds_id,
+        meta_json=meta_json,
+        reuse_fields_json=reuse_fields_json,
+        modal_data_sources=modal_data_sources,
+        modal_fields=modal_fields,
+        modal_stores=ctx.get("accessible_stores"),
+        ds_settings=ds_settings,
+        ds_settings_json=json.dumps(ds_settings, ensure_ascii=False),
+        pending_file_codes=PENDING_FILE_CODES,
     )
 
 
@@ -254,10 +395,12 @@ def _run_source_id(db: Session, run) -> int:
 
 @router.post("/daily/generate")
 def daily_generate(
+    request: Request,
     data_source_id: int = Form(...),
     report_date: str = Form(...),
     db: Session = Depends(get_db),
 ):
+    assert_data_source_access(request, db, data_source_id)
     ds = db.query(DataSource).filter(DataSource.id == data_source_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
@@ -267,23 +410,36 @@ def daily_generate(
     return RedirectResponse(url=f"/daily?run_id={run.id}", status_code=303)
 
 
-@router.get("/daily/{run_id}/export")
-def daily_export(run_id: int, db: Session = Depends(get_db)):
-    from app.services.daily_report import export_daily_excel
+@router.get("/daily/review-template")
+def daily_review_template(
+    request: Request,
+    data_source_id: int,
+    db: Session = Depends(get_db),
+):
+    from app.services.review_import import build_review_template_bytes
+
+    assert_data_source_access(request, db, data_source_id)
+    content = build_review_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="review_orders_template.xlsx"'},
+    )
+
+
+@router.get("/daily/{run_id}/export-sku")
+def daily_export_sku(run_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services.sku_export import export_sku_for_run
 
     run = db.query(ReportRun).filter(ReportRun.id == run_id).first()
     if not run:
         raise HTTPException(status_code=404, detail="报表不存在")
-    values = (
-        db.query(ReportValue)
-        .filter(ReportValue.report_run_id == run_id)
-        .order_by(ReportValue.sort_order)
-        .all()
-    )
-    ds = db.query(DataSource).filter(DataSource.id == _run_source_id(db, run)).first()
+    ds_id = run.data_source_id or _run_source_id(db, run)
+    ds = db.query(DataSource).filter(DataSource.id == ds_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="未找到报表对应的数据源")
-    path = export_daily_excel(ds, run, values)
+    assert_data_source_access(request, db, ds.id)
+    path = export_sku_for_run(db, run, ds)
     return FileResponse(
         path,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -291,22 +447,39 @@ def daily_export(run_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.get("/imports", response_class=HTMLResponse)
-def list_imports(request: Request, db: Session = Depends(get_db)):
-    from app.models import CatalogFile, EtlBatch
+@router.get("/daily/{run_id}/export")
+def daily_export(run_id: int, db: Session = Depends(get_db)):
+    from app.services.daily_report import export_daily_excel
 
-    data_sources = db.query(DataSource).all()
-    etl_batches = db.query(EtlBatch).order_by(EtlBatch.created_at.desc()).limit(20).all()
-    catalog_counts = {
-        ds.id: db.query(CatalogFile).filter(CatalogFile.data_source_id == ds.id).count()
-        for ds in data_sources
-    }
-    return templates.TemplateResponse(
-        "imports.html",
-        {
-            "request": request,
-            "data_sources": data_sources,
-            "etl_batches": etl_batches,
-            "catalog_counts": catalog_counts,
-        },
+    run = db.query(ReportRun).filter(ReportRun.id == run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="报表不存在")
+    ds = db.query(DataSource).filter(DataSource.id == _run_source_id(db, run)).first()
+    if not ds:
+        raise HTTPException(status_code=404, detail="未找到报表对应的数据源")
+    from app.services.report_engine import sync_run_missing_values
+
+    sync_run_missing_values(db, run, ds.id)
+    values = (
+        db.query(ReportValue)
+        .filter(ReportValue.report_run_id == run_id)
+        .order_by(ReportValue.sort_order)
+        .all()
     )
+    path = export_daily_excel(
+        ds,
+        run,
+        values,
+        mappings=db.query(FieldMapping).filter(FieldMapping.data_source_id == ds.id).all(),
+    )
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=path.name,
+    )
+
+
+@router.get("/imports")
+def list_imports():
+    """数据源由启动脚本自动注册，不再提供独立配置页。"""
+    return RedirectResponse(url="/mappings", status_code=303)

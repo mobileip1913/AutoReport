@@ -1,77 +1,392 @@
 {% extends "base.html" %}
+
 {% block title %}日报输出 - AutoReport{% endblock %}
+
 {% block content %}
+
+{% set review_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_logistics', 'mc_review_cost'] %}
+
 <div class="mb-6">
+
   <h1 class="text-2xl font-bold">日报输出</h1>
-  <p class="text-sm text-slate-500 mt-1">按《美宠日报规则-TK》计算，输出对应「日报模板」的分组结构。每个数据源的计算逻辑可在
-    <a href="/mappings" class="text-indigo-600 hover:underline">字段映射</a> 页配置。</p>
+
+  <p class="text-sm text-slate-500 mt-1">在此管理报表字段（增删改序、配置取数），与
+
+    <a href="/mappings" class="text-link hover:underline">报表配置</a> 同步；生成日报后可填写/调整数值。</p>
+
 </div>
+
+
 
 <div class="bg-white rounded-xl shadow border border-slate-100 p-5 mb-6">
+
   <form method="post" action="/daily/generate" class="flex flex-wrap items-end gap-4">
+
     <div>
-      <label class="block text-xs text-slate-500 mb-1">数据源（已配置日报逻辑）</label>
+
+      <label class="block text-xs text-slate-500 mb-1">店铺（报表配置）</label>
+
       <select name="data_source_id" class="border rounded-lg px-3 py-2 text-sm min-w-[260px]">
+
         {% for ds in daily_sources %}
-        <option value="{{ ds.id }}">{{ ds.name }}</option>
+
+        <option value="{{ ds.id }}" {% if active_ds_id == ds.id %}selected{% endif %}>{{ ds.name }}</option>
+
         {% endfor %}
+
       </select>
+
     </div>
+
     <div>
+
       <label class="block text-xs text-slate-500 mb-1">报表日期</label>
+
       <input type="date" name="report_date" value="{{ run.report_date if run else '2026-06-22' }}"
+
              class="border rounded-lg px-3 py-2 text-sm">
+
     </div>
-    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-5 py-2 rounded-lg">
+
+    <button type="submit" class="btn-primary text-sm font-medium">
+
       生成日报
+
     </button>
-    {% if not daily_sources %}
-    <span class="text-sm text-red-500">暂无已配置日报的数据源</span>
-    {% endif %}
-  </form>
-</div>
 
-{% if run %}
-<div class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden">
-  <div class="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-100">
-    <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-600">
-      {% if meta %}
-      <span>项目: <strong>{{ meta.get('项目') }}</strong></span>
-      <span>平台: <strong>{{ meta.get('平台') }}</strong></span>
-      <span>区域: <strong>{{ meta.get('区域') }}</strong></span>
-      <span>店铺: <strong>{{ meta.get('店铺名称') }}</strong></span>
-      {% endif %}
-      <span>日期: <strong>{{ run.report_date }}</strong></span>
-      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs">测试报表 #{{ run.id }}</span>
-    </div>
-    <a href="/daily/{{ run.id }}/export"
-       class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
-      导出 Excel
-    </a>
-  </div>
-
-  <div class="p-6 space-y-5">
-    {% for g in groups %}
-    <div>
-      <div class="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-2">{{ g.title }}</div>
-      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
-        {% for item in g.metrics %}
-        <div class="rounded-xl border border-slate-200 p-3 {% if '利润' in item.label %}bg-indigo-50 border-indigo-200{% else %}bg-slate-50/60{% endif %}">
-          <div class="text-[11px] text-slate-500 mb-1 truncate" title="{{ item.label }}">{{ item.label }}</div>
-          <div class="text-lg font-mono font-semibold {% if '利润' in item.label %}text-indigo-700{% elif item.value == '$0.00' %}text-slate-400{% else %}text-slate-800{% endif %}">
-            {{ item.value }}
-          </div>
-          <div class="text-[10px] text-slate-400 font-mono mt-1 truncate" title="{{ item.expression }}">{{ item.expression }}</div>
+    <div class="flex flex-wrap items-end gap-2 border-l border-slate-200 pl-4 ml-1">
+      <div>
+        <label class="block text-xs text-slate-500 mb-1">刷单数据</label>
+        <div class="flex gap-2">
+          <a id="btnReviewTemplate" href="#" class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">下载模板</a>
+          <label class="px-3 py-2 text-sm border border-sky-200 text-sky-700 rounded-lg hover:bg-sky-50 cursor-pointer">
+            导入刷单
+            <input type="file" id="reviewImportInput" accept=".xlsx" class="hidden">
+          </label>
         </div>
-        {% endfor %}
       </div>
+      <p id="reviewImportHint" class="text-xs text-slate-400 self-center hidden"></p>
     </div>
-    {% endfor %}
-  </div>
+
+    {% if not daily_sources %}
+
+    <span class="text-sm text-red-500">暂无已配置日报的数据源</span>
+
+    {% endif %}
+
+  </form>
+
 </div>
 
-<p class="text-xs text-slate-400 mt-4">
-  注：显示为 <span class="font-mono">$0.00</span> 的指标（刷单/样品/广告/成本/固定费用/框返）为占位字段，待接入对应数据源后自动计算；利润为透明估算口径。
-</p>
+
+
+<div id="dailyToast" class="fixed bottom-6 right-6 hidden z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all duration-300 translate-y-2 opacity-0"></div>
+
+
+
+{% if excel_rows is not none %}
+
+<div id="dailyEditor" class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden"
+
+     data-run-id="{{ run.id if run else '' }}"
+
+     data-ds-id="{{ active_ds_id or (run.data_source_id if run else '') or (daily_sources[0].id if daily_sources else '') }}">
+
+  <div class="flex flex-wrap items-center justify-between gap-3 px-6 py-4 bg-slate-50 border-b border-slate-100">
+
+    <div class="flex flex-wrap items-center gap-3">
+
+      {% if meta %}
+
+      <span class="text-sm text-slate-600">店铺: <strong>{{ meta.get('店铺名称') }}</strong></span>
+
+      <span class="text-sm text-slate-600">日期: <strong>{{ run.report_date }}</strong></span>
+
+      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs">#{{ run.id }}</span>
+
+      {% else %}
+
+      <span class="text-sm text-slate-500">字段结构预览 · 生成日报后可填写数值</span>
+
+      {% endif %}
+
+    </div>
+
+    <div class="flex items-center gap-2">
+
+      <button type="button" id="btnAddField" class="btn-secondary">+ 添加字段</button>
+
+      {% if run %}
+
+      <span id="saveStatus" class="text-xs text-slate-400">已同步</span>
+
+      <a href="/daily/{{ run.id }}/export" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">导出 Excel</a>
+
+      <a href="/daily/{{ run.id }}/export-sku" class="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">导出 SKU 明细</a>
+
+      {% endif %}
+
+    </div>
+
+  </div>
+
+
+
+  <div class="overflow-x-auto">
+
+    <table class="w-full text-sm min-w-[980px] daily-excel-table">
+
+      <thead class="bg-slate-50 text-left text-slate-500 text-xs border-b border-slate-100">
+
+        <tr>
+
+          <th class="px-2 py-3 w-10"></th>
+
+          <th class="px-4 py-3 w-14 font-medium">列</th>
+
+          <th class="px-4 py-3 font-medium">指标名称</th>
+
+          <th class="px-4 py-3 font-medium min-w-[200px]">规则摘要</th>
+
+          {% if run %}<th class="px-4 py-3 w-32 font-medium">系统计算</th>{% endif %}
+
+          {% if run %}<th class="px-4 py-3 w-40 font-medium">报表值</th>{% endif %}
+
+          {% if run %}<th class="px-4 py-3 w-24 font-medium">状态</th>{% endif %}
+
+          <th class="px-4 py-3 w-24 font-medium"></th>
+
+        </tr>
+
+      </thead>
+
+      <tbody id="dailyFieldBody">
+
+        {% for row in excel_rows %}
+
+        {% set m = row.mapping %}
+
+        <tr class="daily-row border-t border-slate-100 transition-colors duration-200
+
+          {% if run and row.is_manual %}daily-row--manual{% elif run and row.is_overridden %}daily-row--overridden{% endif %}
+
+          {% if not row.configured and not row.is_manual %}daily-row--unconfigured{% endif %}"
+
+          draggable="true"
+
+          data-mapping-id="{{ row.mapping_id }}"
+
+          data-value-id="{{ row.value_id or '' }}"
+
+          data-format="{{ row.format_type }}"
+
+          data-manual="{{ '1' if row.is_manual else '0' }}"
+
+          data-computed="{{ row.computed_raw if row.computed_raw is not none else '' }}">
+
+          <td class="px-2 py-3 text-slate-300 cursor-grab active:cursor-grabbing drag-handle" title="拖动排序">⋮⋮</td>
+
+          <td class="px-4 py-3 font-mono text-xs text-slate-500 col-letter">{{ row.col }}</td>
+
+          <td class="px-4 py-3">
+
+            <input type="text" class="field-label w-full max-w-[14rem] font-medium text-slate-800 border border-transparent hover:border-slate-200 focus:border-sky-300 rounded-lg px-2 py-1 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-200" value="{{ row.label }}">
+
+            <div class="text-[10px] font-mono text-slate-400 mt-0.5">{field:{{ row.line_code }}}</div>
+
+          </td>
+
+          <td class="px-4 py-3 text-xs text-slate-600 font-mono max-w-[280px]">
+            {% set ds_id = active_ds_id %}{% set ds_settings_entry = (ds_settings or {}).get(active_ds_id) %}
+            {% include "partials/report_rule_summary.html" %}
+          </td>
+
+          {% if run %}
+
+          <td class="px-4 py-3 font-mono text-sm text-slate-500 computed-cell">
+
+            {% if row.computed_display %}{{ row.computed_display }}{% elif row.is_manual %}<span class="text-slate-300">—</span>{% else %}<span class="text-slate-300">—</span>{% endif %}
+
+          </td>
+
+          <td class="px-4 py-3">
+
+            {% if row.editable %}
+
+            <div class="value-editor relative">
+
+              <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 {% if row.is_manual %}text-amber-800 bg-amber-50/80 border-amber-200{% elif row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
+
+                {{ row.display_value or '点击填写' }}
+
+              </button>
+
+              <input type="text" inputmode="decimal" class="value-input hidden w-full font-mono text-sm px-2 py-1.5 rounded-lg border border-sky-300 focus:ring-2 focus:ring-sky-400 focus:outline-none" value="{{ row.raw_value if row.raw_value is not none else '' }}" placeholder="输入数值">
+
+            </div>
+
+            {% else %}<span class="text-slate-300">—</span>{% endif %}
+
+          </td>
+
+          <td class="px-4 py-3">
+
+            {% if row.is_manual %}
+
+              {% if row.display_value %}
+
+              <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">已填写</span>
+
+              {% else %}
+
+              <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">待填写</span>
+
+              {% endif %}
+
+            {% elif row.is_overridden %}
+
+            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">已调整</span>
+
+            {% elif not row.configured %}
+
+            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">未配规则</span>
+
+            {% else %}
+
+            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">自动</span>
+
+            {% endif %}
+
+          </td>
+
+          {% endif %}
+
+          <td class="px-4 py-3">
+            {% set ds_id = active_ds_id %}
+            {% include "partials/report_rule_actions.html" %}
+          </td>
+
+        </tr>
+
+        {% endfor %}
+
+      </tbody>
+
+    </table>
+
+  </div>
+
+
+
+  <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
+
+    <span>⋮⋮ 拖动调整列顺序</span>
+
+    <span>点击指标名称可修改</span>
+
+    {% if run %}<span>点击报表值可编辑；改规则后请重新生成日报</span>{% endif %}
+
+  </div>
+
+</div>
+
+{% elif daily_sources %}
+
+<p class="text-sm text-slate-500">当前店铺暂无报表字段，请点上方「+ 添加字段」或前往报表配置。</p>
+
 {% endif %}
+
+
+
+{% if active_ds_id %}
+
+{% set modal_data_sources = modal_data_sources or daily_sources %}
+
+{% set modal_fields = modal_fields or [] %}
+
+{% include "partials/mapping_modal.html" %}
+
+{% include "partials/review_settings_modal.html" %}
+
+{% endif %}
+
 {% endblock %}
+
+
+
+{% block scripts %}
+
+{% if active_ds_id %}
+
+<script>window.CURRENT_STORE_DS_ID = {{ active_ds_id | tojson }};</script>
+
+<script>window.DATA_SOURCE_META = {{ meta_json | safe }};</script>
+
+<script>window.DS_SETTINGS = {{ ds_settings_json | safe }};</script>
+
+<script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
+
+<script src="/static/mappings_settings.js?v=20260707u"></script>
+
+<script src="/static/mapping_modal.js?v=20260707u"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const dsSelect = document.querySelector('select[name="data_source_id"]');
+  const tpl = document.getElementById('btnReviewTemplate');
+  const input = document.getElementById('reviewImportInput');
+  const hint = document.getElementById('reviewImportHint');
+  const resolveDsId = () => parseInt(dsSelect?.value || '{{ active_ds_id or "" }}', 10);
+
+  const updateTpl = () => {
+    const id = resolveDsId();
+    if (tpl && id) tpl.href = `/daily/review-template?data_source_id=${id}`;
+  };
+  updateTpl();
+  dsSelect?.addEventListener('change', updateTpl);
+
+  input?.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const id = resolveDsId();
+    if (!id) return;
+    const fd = new FormData();
+    fd.append('file', file);
+    hint?.classList.remove('hidden');
+    if (hint) hint.textContent = '导入中…';
+    try {
+      const res = await fetch(`/api/data-sources/${id}/review-orders/import`, { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = typeof data.detail === 'string' ? data.detail : (data.detail?.errors?.join('；') || '导入失败');
+        if (hint) { hint.textContent = msg; hint.classList.add('text-red-500'); }
+        return;
+      }
+      if (hint) {
+        const orders = data.review_order_distinct ?? data.imported;
+        const logistics = data.review_logistics_total;
+        let msg = `已导入 ${data.imported} 行 · ${orders} 个刷单订单`;
+        if (logistics != null) msg += ` · 物流费将计 $${Number(logistics).toFixed(2)}`;
+        hint.textContent = `${msg}，请重新生成日报`;
+        hint.classList.remove('text-red-500');
+        hint.classList.add('text-emerald-600');
+      }
+    } catch (e) {
+      if (hint) hint.textContent = e.message || '导入失败';
+    }
+    input.value = '';
+  });
+});
+</script>
+
+{% endif %}
+
+{% if excel_rows is not none %}
+
+<script src="/static/daily_editor.js?v=20260707o"></script>
+
+{% endif %}
+
+{% endblock %}
+
+

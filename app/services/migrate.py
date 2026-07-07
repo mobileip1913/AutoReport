@@ -44,9 +44,13 @@ def _ensure_part_columns():
         _add_column_if_missing(conn, "field_mapping_parts", "row_filters", "JSON")
         _add_column_if_missing(conn, "field_mapping_parts", "exclude_sample", "BOOLEAN DEFAULT 0")
         _add_column_if_missing(conn, "field_mapping_parts", "exclude_review", "BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "field_mapping_parts", "exclude_same_day_refund", "BOOLEAN DEFAULT 0")
         _add_column_if_missing(conn, "field_mapping_parts", "join_to_orders", "BOOLEAN DEFAULT 0")
         _add_column_if_missing(conn, "field_mapping_parts", "sources", "JSON")
         _add_column_if_missing(conn, "field_mapping_parts", "ref_field_code", "VARCHAR(50)")
+        _add_column_if_missing(conn, "field_mapping_parts", "only_sample", "BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "field_mapping_parts", "join_keys", "JSON")
+        _add_column_if_missing(conn, "field_mapping_parts", "benchmark_keys", "JSON")
 
 
 def _ensure_data_source_columns():
@@ -92,6 +96,10 @@ def _ensure_report_value_columns():
         return
     with engine.begin() as conn:
         _add_column_if_missing(conn, "report_values", "report_group", "VARCHAR(100)")
+        _add_column_if_missing(conn, "report_values", "line_code", "VARCHAR(50)")
+        _add_column_if_missing(conn, "report_values", "mapping_id", "INTEGER")
+        _add_column_if_missing(conn, "report_values", "computed_raw_value", "FLOAT")
+        _add_column_if_missing(conn, "report_values", "is_overridden", "BOOLEAN DEFAULT 0")
 
 
 def ensure_logical_fields(db: Session) -> None:
@@ -128,3 +136,72 @@ def migrate_legacy_mappings(db: Session) -> None:
             )
         )
     db.commit()
+
+
+CANCELLED_LINE_CODES = frozenset({"mc_cancelled_amount", "mc_cancelled_order_count"})
+CANCELLED_STATUS_VALUES = ("Canceled", "Cancelled")
+CANCELLED_ROW_FILTER = {"column": "Order Status", "op": "in", "values": list(CANCELLED_STATUS_VALUES)}
+
+
+def _strip_legacy_cancel_filters(filters: list | None) -> list:
+    out: list = []
+    for f in filters or []:
+        col = f.get("column")
+        op = f.get("op")
+        if col == "Cancelled Time" and op == "nonempty":
+            continue
+        if col == "Order Status" and op in ("eq", "in", "contains", "not_contains"):
+            continue
+        out.append(f)
+    return out
+
+
+def migrate_cancelled_date_to_created(db: Session) -> None:
+    """取消类指标：Created Time=日报日，Order Status 为 Canceled。"""
+    from app.models import FieldMapping
+
+    mappings = (
+        db.query(FieldMapping)
+        .filter(FieldMapping.line_code.in_(CANCELLED_LINE_CODES))
+        .all()
+    )
+    changed = False
+    for mapping in mappings:
+        for part in mapping.parts:
+            if part.date_filter_column != "Created Time":
+                part.date_filter_column = "Created Time"
+                part.date_format = part.date_format or "us"
+                changed = True
+            filters = _strip_legacy_cancel_filters(part.row_filters)
+            filters.append(dict(CANCELLED_ROW_FILTER))
+            if filters != (part.row_filters or []):
+                part.row_filters = filters
+                changed = True
+    if changed:
+        db.commit()
+
+
+def repair_actual_order_count_parts(db: Session) -> None:
+    """实际订单数：确保按 Created Time 过滤并排除样品/刷单。"""
+    from app.models import FieldMapping
+
+    mappings = (
+        db.query(FieldMapping)
+        .filter(FieldMapping.line_code == "mc_actual_order_count")
+        .all()
+    )
+    changed = False
+    for mapping in mappings:
+        for part in mapping.parts:
+            if not part.date_filter_column:
+                part.date_filter_column = "Created Time"
+                part.date_format = part.date_format or "us"
+                changed = True
+            if not part.exclude_sample:
+                part.exclude_sample = True
+                changed = True
+            if not part.exclude_review:
+                part.exclude_review = True
+                changed = True
+    if changed:
+        db.commit()

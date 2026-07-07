@@ -1,0 +1,32 @@
+{# 报表字段规则摘要（报表配置 / 日报输出共用） #}
+{% if row.is_manual %}
+<span class="text-amber-700">财务在<a href="/daily" class="text-link hover:underline">日报输出</a>页填写</span>
+{% elif row.is_formula %}
+<span class="text-sky-700 font-mono text-xs">{{ m.expression or '公式行' }}</span>
+{% elif row.line_code in review_import_codes %}
+{% if row.line_code == 'mc_review_logistics' %}
+<span class="text-violet-700 review-logistics-rule-summary" data-ds-id="{{ ds_id }}">店铺刷单规则 · {{ ds_settings_entry.review_logistics_rule_summary if ds_settings_entry else '按单固定 $1/单' }}</span>
+{% else %}
+<span class="text-violet-700">刷单清单导入汇总</span>
+{% endif %}
+{% elif m.parts %}
+  {% for p in m.parts|sort(attribute='sort_order') %}
+  <div class="mb-0.5">
+    {% if p.ref_field_code %}
+    <span class="aux-text">{% if not loop.first and p.combine_op == 'subtract' %}− {% elif not loop.first %}＋ {% endif %}[复用 {field:{{ p.ref_field_code }}}]</span>
+    {% elif p.sources and p.sources|length > 1 %}
+      {% for s in p.sources %}<span>{% if loop.index > 1 %}+ {% endif %}{% if s.source_file_keyword %}[{{ s.source_file_keyword }}]{% endif %}{{ s.sheet_name }}.{{ s.column_header }}</span>{% endfor %}
+    {% else %}
+    {% if p.source_file_keyword %}<span class="text-amber-600">[{{ p.source_file_keyword }}]</span>{% endif %}{{ p.sheet_name }}.{{ p.column_header }}
+    {% endif %}
+    {% if not p.ref_field_code %}<span class="text-sky-600">({{ p.aggregation }})</span>{% endif %}
+    {% for hint in p | part_rule_hints %}
+    <span class="text-indigo-600/90 text-[10px] ml-1">· {{ hint }}</span>
+    {% endfor %}
+  </div>
+  {% endfor %}
+{% elif row.pending_file %}
+<span class="text-amber-600">待接入专用文件</span>
+{% else %}
+<span class="text-slate-300">未配置取数</span>
+{% endif %}

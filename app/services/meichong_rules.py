@@ -33,7 +33,11 @@ MEICHONG_CONFIG = {
     "order_date_col": "Created Time",
     "order_date_format": "us",
     "sample_rule": {"sum_cols": SKU_TOTAL_COLS, "equals": 0},
-    "review_order_ids": [],  # 刷单清单，待导入刷单表后填充
+    "review_order_ids": [],  # 兼容 exclude_review；由 review_orders 导入时同步
+    "review_orders": [],  # [{order_id, sku_id, amount, commission, service_fee, logistics, cost}]
+    "review_logistics_mode": "per_order_fixed",
+    "review_logistics_per_order": 1,
+    "review_logistics_exclude_same_day_refund": True,
     "meta": {"项目": "美宠", "平台": "TikTok", "区域": "美国", "店铺名称": "平衡贴美国本土店铺"},
 }
 
@@ -43,10 +47,10 @@ LOGICAL_FIELDS = [
     ("mc_sku_platform_discount", "日报有效SKU平台折扣", "订单表 SKU Platform Discount 求和"),
     ("mc_payment_platform_discount", "日报支付平台折扣", "订单表 Payment platform discount 去重求和"),
     ("mc_receivable_amount", "应收金额", "SKU总额 = SKU Subtotal After Discount + SKU Platform Discount"),
-    ("mc_cancelled_amount", "日报取消订单金额", "SKU总额，Cancelled Time=日报日期"),
+    ("mc_cancelled_amount", "日报取消订单金额", "SKU总额，Created Time=日报日且 Order Status=Canceled"),
     ("mc_refunded_amount", "日报退款订单金额", "退货退款表，Refund Time=日报日期"),
-    ("mc_actual_order_count", "实际订单数", "订单表 Order ID 去重计数，当日、非样品、非刷单"),
-    ("mc_cancelled_order_count", "取消订单数", "Cancelled Time=日报日期 的去重订单数"),
+    ("mc_actual_order_count", "实际订单数", "订单表 Order ID 去重计数，Created Time=日报日、非样品、非刷单"),
+    ("mc_cancelled_order_count", "取消订单数", "Created Time=日报日且 Order Status=Canceled 的去重订单数"),
     ("mc_refunded_order_count", "退款订单数", "退货退款表 Refund Time=日报日期 的去重订单数"),
     ("mc_creator_commission", "联盟达人佣金", "Est. standard + Est. Shop Ads commission，关联当日有效订单"),
     ("mc_partner_commission", "联盟服务商佣金", "Est. Shop Ads + Est. Commission for Affiliate Partner，关联当日有效订单"),
@@ -82,6 +86,7 @@ def _part(
     exclude_sample: bool = False,
     exclude_review: bool = False,
     join_to_orders: bool = False,
+    only_sample: bool = False,
     label: str | None = None,
 ) -> dict:
     return {
@@ -100,12 +105,25 @@ def _part(
         "exclude_sample": exclude_sample,
         "exclude_review": exclude_review,
         "join_to_orders": join_to_orders,
+        "only_sample": only_sample,
     }
 
 
 # 订单表「当日有效行」通用参数
 _ORDER_VALID = dict(file=ORDER_FILE, sheet=ORDER_SHEET, date_col="Created Time", date_fmt="us",
                     exclude_sample=True, exclude_review=True)
+
+# 当日下单且已取消（Created Time=日报日，Order Status=Canceled）
+_ORDER_STATUS_CANCELED = {"column": "Order Status", "op": "in", "values": ["Canceled", "Cancelled"]}
+_ORDER_CANCELLED = dict(
+    file=ORDER_FILE,
+    sheet=ORDER_SHEET,
+    date_col="Created Time",
+    date_fmt="us",
+    exclude_sample=True,
+    exclude_review=True,
+    row_filters=[_ORDER_STATUS_CANCELED],
+)
 
 # code -> (描述, parts[])
 MAPPINGS: dict[str, tuple[str, list[dict]]] = {
@@ -129,12 +147,10 @@ MAPPINGS: dict[str, tuple[str, list[dict]]] = {
         ],
     ),
     "mc_cancelled_amount": (
-        "取消订单 SKU总额，Cancelled Time=日报日期",
+        "取消订单 SKU总额，Created Time=日报日且 Order Status=Canceled",
         [
-            _part(0, "SKU Subtotal After Discount", agg="sum", file=ORDER_FILE, sheet=ORDER_SHEET,
-                  date_col="Cancelled Time", date_fmt="us", exclude_sample=True, exclude_review=True),
-            _part(1, "SKU Platform Discount", agg="sum", file=ORDER_FILE, sheet=ORDER_SHEET,
-                  date_col="Cancelled Time", date_fmt="us", exclude_sample=True, exclude_review=True),
+            _part(0, "SKU Subtotal After Discount", agg="sum", **_ORDER_CANCELLED),
+            _part(1, "SKU Platform Discount", agg="sum", **_ORDER_CANCELLED),
         ],
     ),
     "mc_refunded_amount": (
@@ -147,10 +163,8 @@ MAPPINGS: dict[str, tuple[str, list[dict]]] = {
         [_part(0, "Order ID", agg="count_distinct", dedup_keys=["Order ID"], **_ORDER_VALID)],
     ),
     "mc_cancelled_order_count": (
-        "Cancelled Time=日报日期 的去重订单数",
-        [_part(0, "Order ID", agg="count_distinct", dedup_keys=["Order ID"], file=ORDER_FILE,
-               sheet=ORDER_SHEET, date_col="Cancelled Time", date_fmt="us",
-               exclude_sample=True, exclude_review=True)],
+        "Created Time=日报日且 Order Status=Canceled 的去重订单数",
+        [_part(0, "Order ID", agg="count_distinct", dedup_keys=["Order ID"], **_ORDER_CANCELLED)],
     ),
     "mc_refunded_order_count": (
         "退货退款表 Refund Time=日报日期 的去重订单数",
@@ -181,13 +195,41 @@ MAPPINGS: dict[str, tuple[str, list[dict]]] = {
         [_part(0, "Fees", agg="sum", file=SETTLE_FILE, sheet=SETTLE_SHEET,
                date_col="Order created date", date_fmt="iso")],
     ),
+    # —— 以下从已导入 Catalog 可推导；刷单/成本等待专用文件接入 ——
+    "mc_ad_spend": (
+        "结算表广告费（GMV Max ad fee + Smart Promotion campaign period fee，Order created date=日报日期）",
+        [
+            _part(0, "GMV Max ad fee", agg="sum", file=SETTLE_FILE, sheet=SETTLE_SHEET,
+                  date_col="Order created date", date_fmt="iso"),
+            _part(1, "Smart Promotion campaign period fee", agg="sum", combine="add", file=SETTLE_FILE,
+                  sheet=SETTLE_SHEET, date_col="Order created date", date_fmt="iso"),
+        ],
+    ),
+    "mc_sample_logistics": (
+        "样品单运费 = 订单 Shipping Fee After Discount，仅样品单、Created Time=日报日期",
+        [_part(0, "Shipping Fee After Discount", agg="sum_dedup", dedup_keys=["Order ID"],
+               file=ORDER_FILE, sheet=ORDER_SHEET, date_col="Created Time", date_fmt="us",
+               only_sample=True)],
+    ),
 }
 
+# 尚无对应 Excel / Catalog 文件的占位指标（报表行保留，出报=0）
+PENDING_FILE_CODES = {
+    "mc_sample_cost",
+    "mc_logistics_fee",
+    "mc_product_cost",
+    "mc_fixed_cost",
+    "mc_frame_return",
+}
+
+
+# 导出 Excel 后由财务手工填写的行（系统不算数、单元格留空）
+MANUAL_FILL_LABELS = frozenset({"利润", "总利润", "利润(估算)", "总利润(估算)"})
+_LEGACY_MANUAL_LABELS = {"利润": "利润(估算)", "总利润": "总利润(估算)"}
 
 MEICHONG_TEMPLATE_NAME = "美宠TK美国本土店日报"
 
 # 报表指标行：sort, label, expression, format, highlight
-# 占位字段（无映射）通过 generate_report 自动补 0，显示为待接入
 TEMPLATE_LINES = [
     (1, "实际支付金额", "{field:mc_actual_payment}", "usd", False),
     (2, "应支付金额", "={field:mc_actual_payment}+{field:mc_payment_platform_discount}+{field:mc_sku_platform_discount}", "usd", False),
@@ -208,8 +250,8 @@ TEMPLATE_LINES = [
     (17, "固定费用", "{field:mc_fixed_cost}", "usd", False),
     (18, "框返", "{field:mc_frame_return}", "usd", False),
     (19, "下单数", "={field:mc_actual_order_count}-{field:mc_cancelled_order_count}-{field:mc_refunded_order_count}", "integer", False),
-    (20, "利润(估算)", "={field:mc_receivable_amount}-{field:mc_cancelled_amount}-{field:mc_refunded_amount}-{field:mc_creator_commission}-{field:mc_partner_commission}-{field:mc_shop_commission}-{field:mc_ad_spend}-{field:mc_logistics_fee}-{field:mc_product_cost}", "usd", True),
-    (21, "总利润(估算)", "={field:mc_receivable_amount}-{field:mc_cancelled_amount}-{field:mc_refunded_amount}-{field:mc_creator_commission}-{field:mc_partner_commission}-{field:mc_shop_commission}-{field:mc_ad_spend}-{field:mc_logistics_fee}-{field:mc_product_cost}-{field:mc_fixed_cost}+{field:mc_frame_return}", "usd", True),
+    (20, "利润", "", "usd", True),
+    (21, "总利润", "", "usd", True),
 ]
 
 # 输出分组（对应日报模板.xlsx 的列分组），label 与上面一致
@@ -219,7 +261,7 @@ TEMPLATE_GROUPS = [
     ("样品情况", ["样品单运费", "样品单成本"]),
     ("佣金", ["达人佣金", "店铺佣金"]),
     ("成本/费用", ["站内消耗", "物流费用", "产品成本", "固定费用", "框返"]),
-    ("订单数 / 利润", ["下单数", "利润(估算)", "总利润(估算)"]),
+    ("订单数 / 利润", ["下单数", "利润", "总利润"]),
 ]
 
 
@@ -288,6 +330,10 @@ def apply_meichong_rules(db: Session, reset: bool = True) -> None:
     for code, (desc, parts) in MAPPINGS.items():
         lf = field_map[code]
         mapping = (
+            db.query(FieldMapping)
+            .filter(FieldMapping.data_source_id == ds.id, FieldMapping.line_code == code)
+            .first()
+        ) or (
             db.query(FieldMapping)
             .filter(FieldMapping.data_source_id == ds.id, FieldMapping.logical_field_id == lf.id)
             .first()

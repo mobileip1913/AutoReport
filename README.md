@@ -20,7 +20,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8081
 
 ## Demo 流程
 
-1. **数据源** — 查看 MySQL 中已注册的 Catalog / 批次（`/imports`）
+1. **报表配置** — 调整各指标取数规则与公式（`/mappings`）
 2. **报表配置**（`/mappings`）— 取数规则、公式行、分组与格式合一配置，保存即生效
 3. **日报输出** — 选店铺与日期，从 `fact_*` 事实表聚合出报
 

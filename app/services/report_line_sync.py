@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models import FieldMapping, LogicalField
-from app.services.formula import extract_field_codes
-from app.services.mapping_utils import mapping_line_code, slug_line_code
+from app.models import FieldMapping, FieldMappingPart, LogicalField
+from app.services.formula import expression_to_ref_parts, extract_field_codes
+from app.services.mapping_utils import is_formula_line, mapping_line_code, slug_line_code
+from app.services.meichong_rules import MANUAL_FILL_LABELS, _LEGACY_MANUAL_LABELS
 
 
 def _label_to_group(groups: list[tuple[str, list[str]]]) -> dict[str, str]:
@@ -15,6 +16,43 @@ def _label_to_group(groups: list[tuple[str, list[str]]]) -> dict[str, str]:
         for label in labels:
             out[label] = title
     return out
+
+
+def _apply_ref_parts(db: Session, mapping: FieldMapping, ref_parts: list[tuple[str, str]]) -> None:
+    db.query(FieldMappingPart).filter(FieldMappingPart.mapping_id == mapping.id).delete()
+    for idx, (ref_code, combine_op) in enumerate(ref_parts):
+        db.add(
+            FieldMappingPart(
+                mapping_id=mapping.id,
+                sort_order=idx,
+                label=None,
+                ref_field_code=ref_code,
+                sheet_name="",
+                column_header="",
+                combine_op=combine_op,
+                aggregation="sum",
+            )
+        )
+
+
+def convert_formula_lines_to_fetch(db: Session, data_source_id: int) -> int:
+    """把已有公式行改为「复用字段」取数行。"""
+    n = 0
+    for mapping in db.query(FieldMapping).filter(FieldMapping.data_source_id == data_source_id).all():
+        if (mapping.line_type or "").lower() == "manual":
+            continue
+        if not is_formula_line(mapping):
+            continue
+        ref_parts = expression_to_ref_parts(mapping.expression or "")
+        if not ref_parts:
+            continue
+        mapping.line_type = "fetch"
+        mapping.expression = None
+        _apply_ref_parts(db, mapping, ref_parts)
+        n += 1
+    if n:
+        db.commit()
+    return n
 
 
 def sync_report_lines(
@@ -46,6 +84,33 @@ def sync_report_lines(
     touched = 0
 
     for sort_order, label, expr, fmt, highlight in template_lines:
+        if label in MANUAL_FILL_LABELS or label in _LEGACY_MANUAL_LABELS:
+            canonical = label.replace("(估算)", "")
+            mapping = by_label.get(canonical) or by_label.get(label)
+            if not mapping and canonical in _LEGACY_MANUAL_LABELS:
+                mapping = by_label.get(_LEGACY_MANUAL_LABELS[canonical])
+            if not mapping:
+                line_code = slug_line_code(canonical, used_codes)
+                mapping = FieldMapping(
+                    data_source_id=data_source_id,
+                    line_code=line_code,
+                    line_type="manual",
+                    label=canonical,
+                )
+                db.add(mapping)
+                db.flush()
+                by_label[canonical] = mapping
+                touched += 1
+            mapping.line_type = "manual"
+            mapping.label = canonical
+            mapping.sort_order = sort_order
+            mapping.expression = None
+            mapping.format_type = fmt
+            mapping.is_highlight = bool(highlight)
+            mapping.report_group = label_group.get(canonical) or label_group.get(label)
+            mapping.description = mapping.description or "导出 Excel 后由财务手工填写"
+            continue
+
         field_codes = extract_field_codes(expr)
         simple_fetch = len(field_codes) == 1 and expr.strip() == f"{{field:{field_codes[0]}}}"
 
@@ -72,7 +137,7 @@ def sync_report_lines(
             mapping.line_code = mc_code
             mapping.line_type = "fetch"
             mapping.sort_order = sort_order
-            mapping.expression = expr
+            mapping.expression = None
             mapping.format_type = fmt
             mapping.is_highlight = bool(highlight)
             mapping.report_group = label_group.get(label)
@@ -80,26 +145,19 @@ def sync_report_lines(
                 touched += 1
             continue
 
-        # 公式行或多字段表达式
-        mapping = by_label.get(label)
-        if mapping and mapping.line_type == "fetch" and mapping.logical_field:
-            # 已有取数行，仅更新展示/分组，不改 line_type
-            mapping.label = label
-            mapping.sort_order = sort_order
-            mapping.format_type = fmt
-            mapping.is_highlight = bool(highlight)
-            mapping.report_group = label_group.get(label)
-            touched += 1
+        ref_parts = expression_to_ref_parts(expr)
+        if not ref_parts:
             continue
 
-        if mapping and only_missing and mapping.expression == expr:
+        mapping = by_label.get(label)
+        if mapping and only_missing and mapping.report_group and mapping.parts:
             continue
         if not mapping:
             line_code = slug_line_code(label, used_codes)
             mapping = FieldMapping(
                 data_source_id=data_source_id,
                 line_code=line_code,
-                line_type="formula",
+                line_type="fetch",
                 label=label,
             )
             db.add(mapping)
@@ -107,15 +165,24 @@ def sync_report_lines(
             by_label[label] = mapping
             by_line_code[line_code] = mapping
             touched += 1
-        mapping.line_type = "formula"
+
+        mapping.line_type = "fetch"
         mapping.label = label
         mapping.sort_order = sort_order
-        mapping.expression = expr
+        mapping.expression = None
         mapping.format_type = fmt
         mapping.is_highlight = bool(highlight)
         mapping.report_group = label_group.get(label)
+        _apply_ref_parts(db, mapping, ref_parts)
+        touched += 1
+
+    for m in db.query(FieldMapping).filter(FieldMapping.data_source_id == data_source_id).all():
+        if m.label in _LEGACY_MANUAL_LABELS.values() and (m.line_type or "") != "manual":
+            db.delete(m)
+            touched += 1
 
     db.commit()
+    convert_formula_lines_to_fetch(db, data_source_id)
     return touched
 
 

@@ -24,6 +24,25 @@ def extract_field_codes(expression: str) -> list[str]:
     return FIELD_PATTERN.findall(expression)
 
 
+def expression_to_ref_parts(expression: str) -> list[tuple[str, str]] | None:
+    """将 ={field:a}+{field:b}-{field:c} 转为取数 parts（复用字段 + 加减）。"""
+    expr = (expression or "").strip()
+    if not expr.startswith("="):
+        return None
+    term_re = re.compile(r"([+-]?)\{field:([a-zA-Z0-9_]+)\}")
+    matches = term_re.findall(expr[1:].replace(" ", ""))
+    if not matches:
+        return None
+    parts: list[tuple[str, str]] = []
+    for idx, (op, code) in enumerate(matches):
+        if idx == 0:
+            combine = "subtract" if op == "-" else "add"
+        else:
+            combine = "subtract" if op == "-" else "add"
+        parts.append((code, combine))
+    return parts
+
+
 def _resolve_fields(expression: str, field_values: dict[str, float]) -> str:
     def replacer(match: re.Match[str]) -> str:
         code = match.group(1)

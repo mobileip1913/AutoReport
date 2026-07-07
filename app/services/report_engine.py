@@ -83,6 +83,11 @@ def aggregate_field_values(
     field_values: dict[str, float] = {}
     warnings: list[str] = []
 
+    if daily_mode and data_source.config:
+        from app.services.review_import import review_field_values
+        same_day_ids = context.same_day_refund_order_ids if context else None
+        field_values.update(review_field_values(data_source.config, same_day_ids))
+
     for _ in range(len(fetch_mappings) + 1):
         changed = False
         for mapping in fetch_mappings:
@@ -92,7 +97,10 @@ def aggregate_field_values(
 
             if parts:
                 part_values = [
-                    resolve_part_value(p, rows, import_file_names, context, field_values)
+                    resolve_part_value(
+                        p, rows, import_file_names, context, field_values,
+                        db=db, data_source_id=data_source_id,
+                    )
                     for p in parts
                 ]
                 new_val = combine_parts(parts, part_values)
@@ -150,7 +158,7 @@ def generate_report_for_data_source(
 ):
     from app.models import ReportRun, ReportValue
     from app.services.formula import FormulaError, evaluate_expression, extract_field_codes, format_value
-    from app.services.mapping_utils import default_expression, mapping_label
+    from app.services.mapping_utils import default_expression, is_manual_line, mapping_label, mapping_line_code
 
     field_values, warnings = aggregate_field_values(db, data_source_id, report_date, store_name)
 
@@ -165,6 +173,8 @@ def generate_report_for_data_source(
         raise ValueError("该数据源尚未配置报表行，请先在「报表配置」页添加")
 
     for line in report_lines:
+        if is_manual_line(line):
+            continue
         expr = default_expression(line)
         for code in extract_field_codes(expr):
             field_values.setdefault(code, 0.0)
@@ -181,6 +191,25 @@ def generate_report_for_data_source(
     db.flush()
 
     for line in report_lines:
+        code = mapping_line_code(line)
+        lbl = mapping_label(line)
+        if is_manual_line(line):
+            db.add(
+                ReportValue(
+                    report_run_id=run.id,
+                    mapping_id=line.id,
+                    line_code=code,
+                    line_label=lbl,
+                    expression="",
+                    raw_value=None,
+                    computed_raw_value=None,
+                    display_value="",
+                    is_overridden=False,
+                    sort_order=line.sort_order or 0,
+                    report_group=line.report_group,
+                )
+            )
+            continue
         expr = default_expression(line)
         try:
             raw_value = evaluate_expression(expr, field_values)
@@ -193,10 +222,14 @@ def generate_report_for_data_source(
         db.add(
             ReportValue(
                 report_run_id=run.id,
-                line_label=mapping_label(line),
+                mapping_id=line.id,
+                line_code=code,
+                line_label=lbl,
                 expression=expr,
                 raw_value=raw_value,
+                computed_raw_value=raw_value,
                 display_value=display,
+                is_overridden=False,
                 sort_order=line.sort_order or 0,
                 report_group=line.report_group,
             )
@@ -206,6 +239,85 @@ def generate_report_for_data_source(
     db.refresh(run)
     run._warnings = warnings  # type: ignore[attr-defined]
     return run
+
+
+def sync_run_missing_values(db: Session, run, data_source_id: int) -> int:
+    """为已生成的 run 补全新增字段的 ReportValue（导出前调用）。"""
+    from app.models import ReportValue
+    from app.services.formula import FormulaError, evaluate_expression, extract_field_codes, format_value
+    from app.services.mapping_utils import default_expression, is_manual_line, mapping_label, mapping_line_code
+
+    existing = {
+        v.mapping_id
+        for v in db.query(ReportValue).filter(ReportValue.report_run_id == run.id).all()
+        if v.mapping_id
+    }
+    all_lines = (
+        db.query(FieldMapping)
+        .filter(FieldMapping.data_source_id == data_source_id)
+        .order_by(FieldMapping.sort_order, FieldMapping.id)
+        .all()
+    )
+    report_lines = _report_display_lines(all_lines)
+    missing = [line for line in report_lines if line.id not in existing]
+    if not missing:
+        return 0
+
+    field_values, _ = aggregate_field_values(db, data_source_id, run.report_date, run.store_name)
+    for line in report_lines:
+        if not is_manual_line(line):
+            expr = default_expression(line)
+            for code in extract_field_codes(expr):
+                field_values.setdefault(code, 0.0)
+
+    added = 0
+    for line in missing:
+        code = mapping_line_code(line)
+        lbl = mapping_label(line)
+        if is_manual_line(line):
+            db.add(
+                ReportValue(
+                    report_run_id=run.id,
+                    mapping_id=line.id,
+                    line_code=code,
+                    line_label=lbl,
+                    expression="",
+                    raw_value=None,
+                    computed_raw_value=None,
+                    display_value="",
+                    is_overridden=False,
+                    sort_order=line.sort_order or 0,
+                    report_group=line.report_group,
+                )
+            )
+            added += 1
+            continue
+        expr = default_expression(line)
+        try:
+            raw_value = evaluate_expression(expr, field_values)
+            display = format_value(raw_value, line.format_type or "usd")
+        except FormulaError as exc:
+            raw_value = None
+            display = f"错误: {exc}"
+        db.add(
+            ReportValue(
+                report_run_id=run.id,
+                mapping_id=line.id,
+                line_code=code,
+                line_label=lbl,
+                expression=expr,
+                raw_value=raw_value,
+                computed_raw_value=raw_value,
+                display_value=display,
+                is_overridden=False,
+                sort_order=line.sort_order or 0,
+                report_group=line.report_group,
+            )
+        )
+        added += 1
+    if added:
+        db.commit()
+    return added
 
 
 def generate_report(

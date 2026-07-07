@@ -8,10 +8,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from app.models import DataRow, FieldMappingPart
+from app.models import DataRow, FieldMapping, FieldMappingPart
+from app.services.ds_settings import DEFAULT_JOIN_KEYS
 
 ORDER_ID_CANDIDATES = ["Order ID", "Related order ID", "Order/adjustment ID", "订单号"]
 SKU_ID_CANDIDATES = ["SKU ID", "Sku Id", "Sku ID", "SKU Id"]
+REFUND_DATE_COLUMNS = ["Refund Time", "退款时间"]
 
 
 def _to_number(value) -> float:
@@ -105,9 +107,14 @@ class DailyContext:
     review_order_ids: set[str] = field(default_factory=set)
     order_keys: set[tuple[str, str]] = field(default_factory=set)
     order_id_set: set[str] = field(default_factory=set)
-    # 当日有效订单（Created Time=报表日 且 非样品 非刷单），供达人/服务商佣金关联
+    # 当日有效订单（日期主表日期=报表日 且 非样品 非刷单），供跨表关联
     valid_order_keys: set[tuple[str, str]] = field(default_factory=set)
     valid_order_ids: set[str] = field(default_factory=set)
+    # 当日下单且当日退款的 Order ID（报表日口径）
+    same_day_refund_order_ids: set[str] = field(default_factory=set)
+    # 关联键列头元组 → 有效值元组集合
+    valid_join_map: dict[tuple[str, ...], set[tuple[str, ...]]] = field(default_factory=dict)
+    valid_master_rows: list[dict] = field(default_factory=list)
 
 
 def build_daily_context(rows: list[DataRow], ds_config: dict, report_date: str) -> DailyContext:
@@ -147,13 +154,60 @@ def build_daily_context(rows: list[DataRow], ds_config: dict, report_date: str) 
 
     valid_keys: set[tuple[str, str]] = set()
     valid_ids: set[str] = set()
-    for (oid, sku), d in order_date_map.items():
+    valid_row_norms: list[dict] = []
+    for r in rows:
+        if order_sheet and r.sheet_name != order_sheet:
+            continue
+        nd = _normalized(r.row_data)
+        oid = str(nd.get(order_id_col, "")).strip()
+        if not oid:
+            continue
+        sku = str(nd.get(sku_id_col, "")).strip()
+        d = parse_date(nd.get(order_date_col), order_date_fmt) if order_date_col else None
         if oid in sample_ids or oid in review_ids:
             continue
         if report_d is not None and d != report_d:
             continue
         valid_keys.add((oid, sku))
         valid_ids.add(oid)
+        valid_row_norms.append(nd)
+
+    def _join_set(cols: list[str]) -> set[tuple[str, ...]]:
+        kt = tuple(cols)
+        out: set[tuple[str, ...]] = set()
+        for nd in valid_row_norms:
+            t = tuple(str(nd.get(c, "")).strip() for c in cols)
+            if all(t):
+                out.add(t)
+        return out
+
+    valid_join_map: dict[tuple[str, ...], set[tuple[str, ...]]] = {
+        (order_id_col,): _join_set([order_id_col]),
+        (order_id_col, sku_id_col): _join_set([order_id_col, sku_id_col]),
+        tuple(DEFAULT_JOIN_KEYS): _join_set(list(DEFAULT_JOIN_KEYS)),
+    }
+
+    placed_today_ids: set[str] = set()
+    refunded_today_ids: set[str] = set()
+    if report_d is not None:
+        refund_date_fmt = cfg.get("refund_date_format", "eu")
+        for r in rows:
+            nd = _normalized(r.row_data)
+            oid = _extract(r.row_data, ORDER_ID_CANDIDATES)
+            if not oid:
+                continue
+            if order_sheet and r.sheet_name == order_sheet and order_date_col:
+                placed = parse_date(nd.get(order_date_col), order_date_fmt)
+                if placed == report_d:
+                    placed_today_ids.add(oid)
+            for col in REFUND_DATE_COLUMNS:
+                if col in nd:
+                    refunded = parse_date(nd.get(col), refund_date_fmt)
+                    if refunded == report_d:
+                        refunded_today_ids.add(oid)
+                    break
+
+    same_day_refund_order_ids = placed_today_ids & refunded_today_ids
 
     return DailyContext(
         report_date=report_d,
@@ -163,7 +217,14 @@ def build_daily_context(rows: list[DataRow], ds_config: dict, report_date: str) 
         order_id_set=order_id_set,
         valid_order_keys=valid_keys,
         valid_order_ids=valid_ids,
+        same_day_refund_order_ids=same_day_refund_order_ids,
+        valid_join_map=valid_join_map,
+        valid_master_rows=valid_row_norms,
     )
+
+
+def _cell_str(raw) -> str:
+    return "" if raw is None else str(raw).strip()
 
 
 def _passes_row_filters(row_data: dict, filters: list[dict]) -> bool:
@@ -177,11 +238,16 @@ def _passes_row_filters(row_data: dict, filters: list[dict]) -> bool:
         if isinstance(values, (str, int, float)):
             values = [values]
         raw = normalized.get(col)
-        cell = "" if raw is None else str(raw).strip()
+        cell = _cell_str(raw)
         vals = [str(v).strip() for v in values]
+        lower_cell = cell.lower()
+        lower_vals = [v.lower() for v in vals]
 
         if op == "nonempty":
             if not cell:
+                return False
+        elif op == "empty":
+            if cell:
                 return False
         elif op == "eq":
             if cell != (vals[0] if vals else ""):
@@ -195,6 +261,28 @@ def _passes_row_filters(row_data: dict, filters: list[dict]) -> bool:
         elif op == "not_in":
             if cell in vals:
                 return False
+        elif op == "contains":
+            needle = vals[0] if vals else ""
+            if needle.lower() not in lower_cell:
+                return False
+        elif op == "not_contains":
+            needle = vals[0] if vals else ""
+            if needle.lower() in lower_cell:
+                return False
+        elif op == "starts_with":
+            prefix = vals[0] if vals else ""
+            if not lower_cell.startswith(prefix.lower()):
+                return False
+        elif op == "ends_with":
+            suffix = vals[0] if vals else ""
+            if not lower_cell.endswith(suffix.lower()):
+                return False
+        elif op == "between":
+            num = _to_number(raw)
+            lo = _to_number(vals[0]) if len(vals) > 0 else 0.0
+            hi = _to_number(vals[1]) if len(vals) > 1 else lo
+            if not (lo <= num <= hi):
+                return False
         elif op in ("gt", "gte", "lt", "lte"):
             num = _to_number(raw)
             target = _to_number(vals[0]) if vals else 0.0
@@ -207,6 +295,42 @@ def _passes_row_filters(row_data: dict, filters: list[dict]) -> bool:
             if op == "lte" and not num <= target:
                 return False
     return True
+
+
+def _match_join_keys(
+    row_data: dict,
+    join_keys: list[str],
+    context: DailyContext,
+) -> bool:
+    keys = [k.strip() for k in (join_keys or []) if k and str(k).strip()]
+    if not keys:
+        keys = list(DEFAULT_JOIN_KEYS)
+    key_tuple = tuple(keys)
+    nd = _normalized(row_data)
+    parts = tuple(str(nd.get(k, "")).strip() for k in keys)
+    if not any(parts):
+        return False
+    valid_set = context.valid_join_map.get(key_tuple)
+    if valid_set is None and context.valid_master_rows:
+        valid_set = {
+            t for t in (
+                tuple(str(nd.get(k, "")).strip() for k in keys)
+                for nd in context.valid_master_rows
+            )
+            if all(t)
+        }
+        context.valid_join_map[key_tuple] = valid_set
+    if valid_set is None:
+        if len(keys) == 2:
+            return parts in context.valid_order_keys
+        if len(keys) == 1:
+            return parts[0] in context.valid_order_ids
+        return False
+    if all(parts):
+        return parts in valid_set
+    if len(keys) == 1:
+        return parts[0] in context.valid_order_ids
+    return False
 
 
 def _filter_rows(
@@ -223,6 +347,7 @@ def _filter_rows(
     exclude_sample = bool(getattr(part, "exclude_sample", False))
     exclude_review = bool(getattr(part, "exclude_review", False))
     join_to_orders = bool(getattr(part, "join_to_orders", False))
+    only_sample = bool(getattr(part, "only_sample", False))
 
     for row in rows:
         if row.sheet_name != part.sheet_name:
@@ -239,15 +364,17 @@ def _filter_rows(
             if d != context.report_date:
                 continue
 
-        if context is not None and (exclude_sample or exclude_review or join_to_orders):
+        if context is not None and (exclude_sample or exclude_review or join_to_orders or only_sample):
             oid = _extract(row.row_data, ORDER_ID_CANDIDATES)
+            if only_sample and oid not in context.sample_order_ids:
+                continue
             if exclude_sample and oid in context.sample_order_ids:
                 continue
             if exclude_review and oid in context.review_order_ids:
                 continue
             if join_to_orders:
-                sku = _extract(row.row_data, SKU_ID_CANDIDATES)
-                if (oid, sku) not in context.valid_order_keys and oid not in context.valid_order_ids:
+                join_keys = getattr(part, "join_keys", None) or []
+                if not _match_join_keys(row.row_data, join_keys, context):
                     continue
 
         if not _passes_row_filters(row.row_data, row_filters):
@@ -282,6 +409,8 @@ def _source_part(base: FieldMappingPart, src: dict) -> FieldMappingPart:
         exclude_sample=base.exclude_sample,
         exclude_review=base.exclude_review,
         join_to_orders=base.join_to_orders,
+        join_keys=base.join_keys or [],
+        only_sample=getattr(base, "only_sample", False),
     )
     return p
 
@@ -377,10 +506,74 @@ def resolve_part_value(
     import_file_names: dict[int, str],
     context,
     field_values: dict[str, float],
+    *,
+    db=None,
+    data_source_id: int | None = None,
 ) -> float:
+    benchmark_keys = [k for k in (getattr(part, "benchmark_keys", None) or []) if k and str(k).strip()]
     if part.ref_field_code:
+        if benchmark_keys and db is not None and data_source_id:
+            return aggregate_line_code_with_benchmark(
+                db, data_source_id, part.ref_field_code, rows, import_file_names, context, benchmark_keys
+            )
         return float(field_values.get(part.ref_field_code, 0.0))
-    return aggregate_part(rows, part, import_file_names, context)
+    effective = _join_override_part(part, benchmark_keys) if benchmark_keys else part
+    return aggregate_part(rows, effective, import_file_names, context)
+
+
+class _JoinOverridePart:
+    """组间基准字段：强制按 benchmark_keys 关联日期主表有效行。"""
+
+    def __init__(self, part: FieldMappingPart, benchmark_keys: list[str]):
+        self._part = part
+        self._benchmark_keys = benchmark_keys
+
+    def __getattr__(self, name: str):
+        if name == "join_keys" and self._benchmark_keys:
+            return self._benchmark_keys
+        if name == "join_to_orders" and self._benchmark_keys:
+            return True
+        return getattr(self._part, name)
+
+
+def _join_override_part(part: FieldMappingPart, benchmark_keys: list[str]) -> _JoinOverridePart:
+    return _JoinOverridePart(part, benchmark_keys)
+
+
+def aggregate_mapping_with_benchmark(
+    mapping: FieldMapping,
+    rows: list,
+    import_file_names: dict[int, str],
+    context: DailyContext | None,
+    benchmark_keys: list[str],
+) -> float:
+    parts = sorted(mapping.parts, key=lambda p: p.sort_order)
+    values = [
+        aggregate_part(rows, _join_override_part(p, benchmark_keys), import_file_names, context)
+        for p in parts
+    ]
+    return combine_parts(parts, values)
+
+
+def aggregate_line_code_with_benchmark(
+    db,
+    data_source_id: int,
+    line_code: str,
+    rows: list,
+    import_file_names: dict[int, str],
+    context: DailyContext | None,
+    benchmark_keys: list[str],
+) -> float:
+    from app.models import FieldMapping
+
+    mapping = (
+        db.query(FieldMapping)
+        .filter(FieldMapping.data_source_id == data_source_id, FieldMapping.line_code == line_code)
+        .first()
+    )
+    if not mapping or not mapping.parts:
+        return 0.0
+    return aggregate_mapping_with_benchmark(mapping, rows, import_file_names, context, benchmark_keys)
 
 
 def combine_parts(parts: list[FieldMappingPart], part_values: list[float]) -> float:

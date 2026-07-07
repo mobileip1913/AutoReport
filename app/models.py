@@ -32,12 +32,56 @@ class DataSource(Base):
     platform = Column(String(50))
     description = Column(Text, nullable=True)
     # 日报计算上下文配置（存在即启用日报模式）：
-    # {order_sheet, order_id_col, sku_id_col, sample_rule:{sum_cols, equals}, review_order_ids:[]}
+    # {order_file, order_sheet, order_id_col, sku_id_col, order_date_col, order_date_format,
+    #  sample_rule:{sum_cols, equals}, review_order_ids:[], daily_generate_at:"08:00"}
     config = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     imports = relationship("DataImport", back_populates="data_source")
     mappings = relationship("FieldMapping", back_populates="data_source")
+    store = relationship("Store", back_populates="data_source", uselist=False)
+
+
+class Account(Base):
+    """Demo 账号：控制可访问的店铺与报表配置。"""
+
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True)
+    login_name = Column(String(50), unique=True, nullable=False)
+    display_name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    store_links = relationship("AccountStore", back_populates="account", cascade="all, delete-orphan")
+
+
+class Store(Base):
+    """店铺：与 DataSource 1:1，报表配置绑定在 data_source_id。"""
+
+    __tablename__ = "stores"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False)
+    platform = Column(String(50), nullable=False)
+    data_source_id = Column(ForeignKey("data_sources.id"), unique=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    data_source = relationship("DataSource", back_populates="store")
+    account_links = relationship("AccountStore", back_populates="store", cascade="all, delete-orphan")
+
+
+class AccountStore(Base):
+    """账号 ↔ 店铺 多对多：一个账号可管理多个店铺。"""
+
+    __tablename__ = "account_stores"
+    __table_args__ = (UniqueConstraint("account_id", "store_id"),)
+
+    id = Column(Integer, primary_key=True)
+    account_id = Column(ForeignKey("accounts.id"), nullable=False)
+    store_id = Column(ForeignKey("stores.id"), nullable=False)
+
+    account = relationship("Account", back_populates="store_links")
+    store = relationship("Store", back_populates="account_links")
 
 
 class DataImport(Base):
@@ -200,8 +244,15 @@ class FieldMappingPart(Base):
     # 排除样品单（同订单 SKU 总额=0）/ 刷单单（外部清单）
     exclude_sample = Column(Boolean, default=False)
     exclude_review = Column(Boolean, default=False)
-    # 跨表关联：仅保留 Order ID(&SKU ID) 命中订单表有效订单的行
+    # 排除当日下单且当日退款的订单
+    exclude_same_day_refund = Column(Boolean, default=False)
+    # 跨表关联：仅保留命中日期主表有效行的记录
     join_to_orders = Column(Boolean, default=False)
+    # 关联匹配键列头，如 ["Order ID", "SKU ID"]
+    join_keys = Column(JSON, default=list)
+    # 组间组合基准字段（与上一来源组对齐），如 ["Order ID"]
+    benchmark_keys = Column(JSON, default=list)
+    only_sample = Column(Boolean, default=False)
     # 组内多列：同一规则块内先对各列求值再相加/相减
     sources = Column(JSON, default=list)
     # 复用同数据源已配置的逻辑字段（存字段 code，如 mc_actual_payment）
@@ -273,11 +324,16 @@ class ReportValue(Base):
 
     id = Column(Integer, primary_key=True)
     report_run_id = Column(ForeignKey("report_runs.id"))
+    mapping_id = Column(ForeignKey("field_mappings.id"), nullable=True)
+    line_code = Column(String(50), nullable=True)
     line_label = Column(String(100))
     expression = Column(Text)
     raw_value = Column(Float, nullable=True)
+    computed_raw_value = Column(Float, nullable=True)
     display_value = Column(String(50))
+    is_overridden = Column(Boolean, default=False)
     sort_order = Column(Integer, default=0)
     report_group = Column(String(100), nullable=True)
 
     report_run = relationship("ReportRun", back_populates="values")
+    mapping = relationship("FieldMapping", foreign_keys=[mapping_id])

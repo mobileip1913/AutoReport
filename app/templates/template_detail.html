@@ -49,9 +49,9 @@
       </thead>
       <tbody>
         {% for line in lines %}
-        <tr class="border-b border-slate-50 {% if line.is_highlight %}bg-indigo-50{% endif %}">
+        <tr class="border-b border-slate-50 {% if line.is_highlight %}bg-sky-50{% endif %}">
           <td class="py-3 text-slate-400">{{ line.sort_order }}</td>
-          <td class="py-3 font-medium {% if line.is_highlight %}text-indigo-700{% endif %}">{{ line.label }}</td>
+          <td class="py-3 font-medium {% if line.is_highlight %}text-sky-700{% endif %}">{{ line.label }}</td>
           <td class="py-3 font-mono text-xs text-slate-600">{{ line.expression }}</td>
           <td class="py-3 text-slate-500">{{ line.format_type }}</td>
         </tr>
@@ -82,7 +82,7 @@
           <option value="Shopee-SG-001">Shopee-SG-001</option>
         </select>
       </div>
-      <button type="submit" class="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">测试生成报表</button>
+      <button type="submit" class="btn-primary w-full py-2.5 text-sm">测试生成报表</button>
     </form>
     <p class="text-xs text-slate-400 mt-3">测试生成不影响已发布版本，确认后可点击「发布模板」。</p>
   </div>
