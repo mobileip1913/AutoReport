@@ -51,6 +51,7 @@
 <div id="dailyToast" class="fixed bottom-6 right-6 hidden z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all duration-300 translate-y-2 opacity-0"></div>
 
 {% if excel_rows is not null %}
+{% set review_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_logistics', 'mc_review_cost'] %}
 <div id="dailyEditor" class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden"
      data-run-id="{{ run ? run.id : '' }}"
      data-ds-id="{{ active_ds_id ?: (run ? run.data_source_id : '') ?: (daily_sources ? daily_sources[0].id : '') }}">
@@ -105,6 +106,10 @@
             <input type="text" class="field-label w-full max-w-[14rem] font-medium text-slate-800 border border-transparent hover:border-slate-200 focus:border-sky-300 rounded-lg px-2 py-1 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-200" value="{{ row.label }}">
             <div class="text-[10px] font-mono text-slate-400 mt-0.5">{field:{{ row.line_code }}}</div>
           </td>
+          <td class="px-4 py-3 text-xs text-slate-600 font-mono max-w-[280px]">
+            {% set ds_id = active_ds_id %}{% set ds_settings_entry = (ds_settings[active_ds_id] ?? {}) %}
+            {% include "partials/report_rule_summary.html.twig" %}
+          </td>
           {% if run %}
           <td class="px-4 py-3 font-mono text-sm text-slate-500 computed-cell">
             {% if row.computed_display %}{{ row.computed_display }}{% elseif row.is_manual %}<span class="text-slate-300">—</span>{% else %}<span class="text-slate-300">—</span>{% endif %}
@@ -136,13 +141,8 @@
           </td>
           {% endif %}
           <td class="px-4 py-3">
-            {% if row.is_manual %}
-            <span class="text-xs text-slate-400">手工填</span>
-            {% else %}
-            <button type="button" class="btn-edit text-xs text-link hover:underline whitespace-nowrap" data-id="{{ row.mapping_id }}">
-              {% if row.configured %}规则{% else %}配置取数{% endif %}
-            </button>
-            {% endif %}
+            {% set ds_id = active_ds_id %}
+            {% include "partials/report_rule_actions.html.twig" %}
           </td>
         </tr>
         {% endfor %}
@@ -164,16 +164,20 @@
 {% set modal_data_sources = modal_data_sources ?: daily_sources %}
 {% set modal_fields = modal_fields ?: [] %}
 {% include "partials/mapping_modal.html.twig" %}
+{% include "partials/review_settings_modal.html.twig" %}
 {% endif %}
 
 {% endblock %}
 
 {% block scripts %}
 {% if active_ds_id %}
+<script>window.CURRENT_STORE_DS_ID = {{ active_ds_id }};</script>
 <script>window.DATA_SOURCE_META = {{ meta_json|raw }};</script>
+<script>window.DS_SETTINGS = {{ ds_settings_json|raw }};</script>
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json|raw }};</script>
 <script>window.MAPPING_MODAL_CONTEXT = 'daily';</script>
-<script src="/static/mapping_modal.js?v=20260707l"></script>
+<script src="/static/mappings_settings.js?v=20260707u"></script>
+<script src="/static/mapping_modal.js?v=20260707u"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const dsSelect = document.querySelector('select[name="data_source_id"]');
@@ -207,7 +211,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       if (hint) {
-        hint.textContent = `已导入 ${data.imported} 条刷单，请重新生成日报`;
+        const orders = data.review_order_distinct ?? data.imported;
+        const logistics = data.review_logistics_total;
+        let msg = `已导入 ${data.imported} 行 · ${orders} 个刷单订单`;
+        if (logistics != null) msg += ` · 物流费将计 $${Number(logistics).toFixed(2)}`;
+        hint.textContent = `${msg}，请重新生成日报`;
         hint.classList.remove('text-red-500');
         hint.classList.add('text-emerald-600');
       }
@@ -221,6 +229,6 @@ document.addEventListener('DOMContentLoaded', () => {
 {% endif %}
 
 {% if excel_rows is not null %}
-<script src="/static/daily_editor.js?v=20260707d"></script>
+<script src="/static/daily_editor.js?v=20260707o"></script>
 {% endif %}
 {% endblock %}

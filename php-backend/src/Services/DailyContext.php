@@ -23,6 +23,8 @@ final class DailyContext
         public array $validJoinMap = [],
         /** @var array[] 当日有效订单行（normalized row_data） */
         public array $validMasterRows = [],
+        /** @var array<string, true> 当日下单且当日退款的 Order ID */
+        public array $sameDayRefundOrderIds = [],
     ) {
     }
 }

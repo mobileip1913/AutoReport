@@ -275,6 +275,42 @@ def _write_report_value_cell(cell, rv, label: str) -> None:
     cell.value = _export_cell_value(rv.raw_value)
 
 
+def _resolve_writable_cell(ws, row: int, col: int):
+    """合并单元格仅左上角可写，解析真实可写单元格。"""
+    cell = ws.cell(row=row, column=col)
+    if type(cell).__name__ != "MergedCell":
+        return cell
+    for merged_range in ws.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = merged_range.bounds
+        if min_row <= row <= max_row and min_col <= col <= max_col:
+            return ws.cell(row=min_row, column=min_col)
+    return cell
+
+
+def _set_metric_header(ws, col_num: int, label: str, style_src) -> None:
+    """模板指标表头多在第 2 行（F2:F3 等合并），超出 AE 的追加列写第 3 行。"""
+    if col_num <= 31:
+        cell = _resolve_writable_cell(ws, 2, col_num)
+    else:
+        cell = ws.cell(row=3, column=col_num)
+    cell.value = label
+    if style_src.has_style:
+        cell.font = copy(style_src.font)
+        cell.border = copy(style_src.border)
+        cell.fill = copy(style_src.fill)
+        cell.number_format = copy(style_src.number_format)
+        cell.alignment = copy(style_src.alignment)
+
+
+def _clear_stale_append_columns(ws, first_clear_col: int, last_col: int) -> None:
+    """清除旧版导出在 AF 之后写入的残留表头/数据。"""
+    for col in range(first_clear_col, last_col + 1):
+        for row in (2, 3, 4):
+            cell = _resolve_writable_cell(ws, row, col)
+            if type(cell).__name__ != "MergedCell":
+                cell.value = None
+
+
 def export_daily_excel(data_source, run, values: list, mappings: list | None = None) -> Path:
     """按 files/日报模板.xlsx 版式导出：保留前 3 行表头，在第 4 行填入数据。"""
     meta = report_meta(data_source, run)
@@ -312,6 +348,7 @@ def export_daily_excel(data_source, run, values: list, mappings: list | None = N
     ordered = report_display_mappings(mappings)
     header_row = 3
     style_src = ws.cell(row=header_row, column=31)
+    first_unused_col = METRIC_START_COLUMN + len(ordered)
 
     if ordered:
         max_col = max(max_col, METRIC_START_COLUMN + len(ordered) - 1)
@@ -320,15 +357,13 @@ def export_daily_excel(data_source, run, values: list, mappings: list | None = N
     for idx, m in enumerate(ordered):
         col_num = METRIC_START_COLUMN + idx
         label = mapping_label(m)
-        hdr = ws.cell(row=header_row, column=col_num, value=label)
-        if style_src.has_style:
-            hdr.font = copy(style_src.font)
-            hdr.border = copy(style_src.border)
-            hdr.fill = copy(style_src.fill)
-            hdr.number_format = copy(style_src.number_format)
-            hdr.alignment = copy(style_src.alignment)
+        _set_metric_header(ws, col_num, label, style_src)
         data_cell = ws.cell(row=data_row, column=col_num)
         _write_report_value_cell(data_cell, _find_value(m), label)
+
+    # 未再使用的模板列 / 旧版 AF 追加列：清掉残留表头与数据
+    if ordered:
+        _clear_stale_append_columns(ws, first_unused_col, max(ws.max_column, 35))
 
     wb.save(out_path)
     wb.close()

@@ -25,6 +25,9 @@ final class ConfigExport
         'sample_rule',
         'meta',
         'excel_template_file',
+        'review_logistics_mode',
+        'review_logistics_per_order',
+        'review_logistics_exclude_same_day_refund',
     ];
 
     private static function serializePart(array $part): array
@@ -49,6 +52,7 @@ final class ConfigExport
             'join_to_orders' => (bool) ($part['join_to_orders'] ?? false),
             'join_keys' => Database::jsonDecode($part['join_keys'] ?? null, []) ?: [],
             'benchmark_keys' => Database::jsonDecode($part['benchmark_keys'] ?? null, []) ?: [],
+            'exclude_same_day_refund' => (bool) ($part['exclude_same_day_refund'] ?? false),
             'only_sample' => (bool) ($part['only_sample'] ?? false),
         ];
     }

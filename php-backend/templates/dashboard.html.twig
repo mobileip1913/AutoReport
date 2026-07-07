@@ -1,88 +1,76 @@
 {% extends "base.html.twig" %}
 {% block title %}概览 - AutoReport{% endblock %}
 {% block content %}
-<div class="page-header mb-8">
-  <h1 class="text-3xl font-bold text-slate-900" style="text-wrap: balance">跨境电商自动报表 Demo</h1>
-  <p class="mt-2 text-slate-600" style="text-wrap: pretty">财务自定义模板与字段映射 → 自动解析 Excel → 生成统一口径日经营报表</p>
-</div>
-
-<div class="grid md:grid-cols-3 gap-6 mb-8 page-stagger">
-  <div class="app-card p-6">
-    <div class="text-sm text-slate-500">已接入店铺</div>
-    <div class="app-stat-value mt-1">{{ data_sources|length }}</div>
-    <div class="text-xs text-slate-400 mt-2">启动时自动注册，无需手动配置</div>
+<section class="home-hub" aria-labelledby="home-hub-title">
+  <div class="home-hub__ambient" aria-hidden="true">
+    <span class="home-hub__orb home-hub__orb--a"></span>
+    <span class="home-hub__orb home-hub__orb--b"></span>
+    <span class="home-hub__orb home-hub__orb--c"></span>
   </div>
-  <div class="app-card p-6">
-    <div class="text-sm text-slate-500">报表模板</div>
-    <div class="app-stat-value mt-1">{{ templates_list|length }}</div>
-    <div class="text-xs text-slate-400 mt-2">支持草稿 → 测试 → 发布</div>
-  </div>
-  <div class="app-card p-6">
-    <div class="text-sm text-slate-500">最近生成</div>
-    <div class="app-stat-value mt-1">{{ recent_runs|length }}</div>
-    <div class="text-xs text-slate-400 mt-2">含测试与正式报表</div>
-  </div>
-</div>
 
-<div class="grid lg:grid-cols-2 gap-6 page-stagger">
-  <section class="app-card app-card--static p-6">
-    <h2 class="text-lg font-semibold mb-4">快速开始</h2>
-    <ol class="space-y-3 text-sm text-slate-700 list-decimal list-inside">
-      <li>在 <a href="/mappings" class="text-link text-link--underline">报表配置</a> 查看或调整各指标的取数规则与公式</li>
-      <li>在 <a href="/daily" class="text-link text-link--underline">日报输出</a> 选择日期生成报表并导出 Excel</li>
-    </ol>
-  </section>
+  <header class="home-hub__hero">
+    <p class="home-hub__eyebrow">快速开始</p>
+    <h1 id="home-hub-title" class="home-hub__title">配置一次，每日自动出报</h1>
+    <p class="home-hub__lead">
+      在报表配置里定义取数规则，再到日报输出生成并导出 Excel。
+      {% if current_store %}
+      <span class="home-hub__store">当前店铺：<strong>{{ current_store.name }}</strong></span>
+      {% endif %}
+    </p>
+  </header>
 
-  <section class="app-card app-card--static p-6">
-    <h2 class="text-lg font-semibold mb-4">最近生成</h2>
-    {% if recent_runs %}
-    <ul class="space-y-2">
-      {% for run in recent_runs|slice(0, 6) %}
-      <li class="text-sm p-3 bg-slate-50 border border-slate-100 rounded-lg">
-        <span class="text-slate-700">{{ run.store_name }}</span>
-        <span class="text-slate-400 mx-1">·</span>
-        <span class="text-slate-500">{{ run.report_date }}</span>
-        <a href="/daily?run_id={{ run.id }}" class="text-link text-xs ml-2 hover:underline">查看 →</a>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="text-sm text-slate-500">暂无报表记录</p>
-    {% endif %}
-  </section>
-</div>
+  <div class="home-hub__steps">
+    <a href="/mappings" class="home-step home-step--config">
+      <div class="home-step__head">
+        <span class="home-step__badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 6h9.75M10.5 12h9.75M10.5 18h9.75M4.5 6h.008v.008H4.5V6zm0 6h.008v.008H4.5V12zm0 6h.008v.008H4.5V18z"/>
+          </svg>
+        </span>
+        <span class="home-step__index">01</span>
+      </div>
+      <h2 class="home-step__title">报表配置</h2>
+      <p class="home-step__desc">绑定店铺、设置数据基准表与取数规则，定义日报字段与计算口径。</p>
+      <ul class="home-step__tags">
+        <li>取数规则</li>
+        <li>跨表关联</li>
+        <li>导出 JSON</li>
+      </ul>
+      <span class="home-step__cta">
+        进入配置
+        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/></svg>
+      </span>
+    </a>
 
-<section class="mt-6 app-card app-card--static p-6 page-stagger">
-  <h2 class="text-lg font-semibold mb-4">报表模板</h2>
-  <div class="overflow-x-auto">
-    <table class="app-table w-full text-sm">
-      <thead class="text-left text-slate-500 border-b">
-        <tr>
-          <th class="py-2">名称</th>
-          <th>状态</th>
-          <th>版本</th>
-          <th>负责人</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for t in templates_list %}
-        <tr class="border-b border-slate-50">
-          <td class="py-3 font-medium">{{ t.name }}</td>
-          <td>
-            {% if t.status == 'published' %}
-            <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">已发布 v{{ t.version }}</span>
-            {% else %}
-            <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">草稿</span>
-            {% endif %}
-          </td>
-          <td>{{ t.version }}</td>
-          <td>{{ t.owner }}</td>
-          <td><a href="/templates/{{ t.id }}" class="text-link row-action">进入 →</a></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="home-hub__bridge" aria-hidden="true">
+      <span class="home-hub__bridge-line"></span>
+      <span class="home-hub__bridge-dot"></span>
+      <span class="home-hub__bridge-line"></span>
+    </div>
+
+    <a href="/daily" class="home-step home-step--daily">
+      <div class="home-step__head">
+        <span class="home-step__badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 9.75h18M4.5 6.75h15a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-15a1.5 1.5 0 01-1.5-1.5v-12a1.5 1.5 0 011.5-1.5z"/>
+          </svg>
+        </span>
+        <span class="home-step__index">02</span>
+      </div>
+      <h2 class="home-step__title">日报输出</h2>
+      <p class="home-step__desc">选择日期生成日报，核对数值、填写手工项，一键导出 Excel 或 SKU 明细。</p>
+      <ul class="home-step__tags">
+        <li>生成日报</li>
+        <li>刷单导入</li>
+        <li>导出 Excel</li>
+      </ul>
+      <span class="home-step__cta">
+        开始出报
+        <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clip-rule="evenodd"/></svg>
+      </span>
+    </a>
   </div>
+
+  <p class="home-hub__footnote">数据由 ETL 脚本同步至数据库；列头变更时在报表配置中调整取数规则即可。</p>
 </section>
 {% endblock %}

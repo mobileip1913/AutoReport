@@ -49,6 +49,8 @@ final class DsSettings
             'sku_id_col',
             'daily_generate_at',
             'excel_template_file',
+            'review_logistics_mode',
+            'review_logistics_exclude_same_day_refund',
         ] as $key) {
             if (array_key_exists($key, $body)) {
                 $val = $body[$key];
@@ -57,6 +59,17 @@ final class DsSettings
                 }
                 $out[$key] = ($val === '' || $val === null) ? null : $val;
             }
+        }
+        if (array_key_exists('review_logistics_per_order', $body)) {
+            $raw = $body['review_logistics_per_order'];
+            if ($raw === null || $raw === '') {
+                $out['review_logistics_per_order'] = null;
+            } else {
+                $out['review_logistics_per_order'] = max(0.0, (float) $raw);
+            }
+        }
+        if (array_key_exists('review_logistics_exclude_same_day_refund', $body)) {
+            $out['review_logistics_exclude_same_day_refund'] = (bool) $body['review_logistics_exclude_same_day_refund'];
         }
         return $out;
     }
@@ -82,6 +95,7 @@ final class DsSettings
         if ($store === null) {
             $store = Database::fetchOne('SELECT * FROM stores WHERE data_source_id = ?', [(int) $ds['id']]);
         }
+        $reviews = $cfg['review_orders'] ?? [];
         return [
             'data_source_id' => (int) $ds['id'],
             'store_id' => $store ? (int) $store['id'] : null,
@@ -94,7 +108,12 @@ final class DsSettings
             'sku_id_col' => ($cfg['sku_id_col'] ?? '') ?: 'SKU ID',
             'daily_generate_at' => $cfg['daily_generate_at'] ?? '',
             'excel_template_file' => $cfg['excel_template_file'] ?? '',
-            'review_order_count' => count(($cfg['review_orders'] ?? []) ?: ($cfg['review_order_ids'] ?? [])),
+            'review_order_count' => count($reviews ?: ($cfg['review_order_ids'] ?? [])),
+            'review_order_distinct' => ReviewImport::distinctReviewOrderCount($reviews),
+            'review_logistics_mode' => ReviewImport::REVIEW_LOGISTICS_MODE_FIXED,
+            'review_logistics_per_order' => ReviewImport::reviewLogisticsPerOrder($cfg),
+            'review_logistics_exclude_same_day_refund' => ReviewImport::reviewLogisticsExcludeSameDayRefund($cfg),
+            'review_logistics_rule_summary' => ReviewImport::reviewLogisticsRuleSummary($cfg),
             'date_master_summary' => self::dateMasterSummary($cfg),
         ];
     }

@@ -242,6 +242,8 @@ final class Migrate
         self::addColumnIfMissing('field_mapping_parts', 'ref_field_code', 'VARCHAR(50)');
         self::addColumnIfMissing('field_mapping_parts', 'only_sample', 'BOOLEAN DEFAULT 0');
         self::addColumnIfMissing('field_mapping_parts', 'join_keys', $json);
+        self::addColumnIfMissing('field_mapping_parts', 'benchmark_keys', $json);
+        self::addColumnIfMissing('field_mapping_parts', 'exclude_same_day_refund', 'BOOLEAN DEFAULT 0');
     }
 
     private static function ensureDataSourceColumns(): void

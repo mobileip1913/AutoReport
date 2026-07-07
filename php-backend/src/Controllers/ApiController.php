@@ -48,6 +48,13 @@ final class ApiController
         foreach ($parts as $idx => $part) {
             $refCode = trim((string) ($part['ref_field_code'] ?? ''));
             if ($refCode !== '') {
+                $benchmarkKeys = [];
+                foreach ((array) ($part['benchmark_keys'] ?? []) as $k) {
+                    $k = trim((string) $k);
+                    if ($k !== '') {
+                        $benchmarkKeys[] = $k;
+                    }
+                }
                 Database::insert('field_mapping_parts', [
                     'mapping_id' => $mappingId,
                     'sort_order' => $idx,
@@ -60,6 +67,7 @@ final class ApiController
                     'combine_op' => ($part['combine_op'] ?? '') ?: 'add',
                     'aggregation' => 'sum',
                     'dedup_keys' => Database::jsonEncode([]),
+                    'benchmark_keys' => Database::jsonEncode($benchmarkKeys),
                 ]);
                 continue;
             }
@@ -87,6 +95,13 @@ final class ApiController
                     $joinKeys[] = $k;
                 }
             }
+            $benchmarkKeys = [];
+            foreach ((array) ($part['benchmark_keys'] ?? []) as $k) {
+                $k = trim((string) $k);
+                if ($k !== '') {
+                    $benchmarkKeys[] = $k;
+                }
+            }
 
             Database::insert('field_mapping_parts', [
                 'mapping_id' => $mappingId,
@@ -105,8 +120,10 @@ final class ApiController
                 'row_filters' => Database::jsonEncode($rowFilters),
                 'exclude_sample' => !empty($part['exclude_sample']) ? 1 : 0,
                 'exclude_review' => !empty($part['exclude_review']) ? 1 : 0,
+                'exclude_same_day_refund' => !empty($part['exclude_same_day_refund']) ? 1 : 0,
                 'join_to_orders' => !empty($part['join_to_orders']) ? 1 : 0,
                 'join_keys' => Database::jsonEncode($joinKeys),
+                'benchmark_keys' => Database::jsonEncode($benchmarkKeys),
                 'only_sample' => !empty($part['only_sample']) ? 1 : 0,
             ]);
         }

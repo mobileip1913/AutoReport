@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App;
 
+use App\Services\MappingUtils;
 use App\Services\Timezone;
 use Twig\Environment;
 use Twig\Loader\FilesystemLoader;
@@ -27,6 +28,7 @@ final class Views
             'autoescape' => 'html',
         ]);
         $twig->addFilter(new TwigFilter('cst', fn(?string $v, string $fmt = 'Y-m-d H:i') => Timezone::toCst($v, $fmt)));
+        $twig->addFilter(new TwigFilter('part_rule_hints', fn(array $part) => MappingUtils::partRuleHints($part)));
         self::$twig = $twig;
         return $twig;
     }

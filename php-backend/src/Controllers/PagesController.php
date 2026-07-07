@@ -252,6 +252,7 @@ final class PagesController
             'pending_file_codes' => MeichongRules::PENDING_FILE_CODES,
             'ds_settings_json' => json_encode($dsSettings, JSON_UNESCAPED_UNICODE),
             'ds_settings' => $dsSettings,
+            'modal_stores' => $accessibleStores,
         ]));
     }
 
@@ -340,9 +341,24 @@ final class PagesController
         }
 
         $excelRows = null;
+        $dsSettings = [];
+        $dsSettingsJson = '{}';
         if ($activeDsId) {
-            $excelRows = DailyReport::buildDynamicReportRows($mappings, $run ? $values : null);
+            $excelRows = DailyReport::buildDynamicReportRows($mappings, $run ? $values : null, MeichongRules::PENDING_FILE_CODES);
         }
+
+        if ($activeDsId && $ds) {
+            $dsSettings = [(int) $ds['id'] => DsSettings::serializeDsSettings($ds)];
+            $dsSettingsJson = json_encode($dsSettings, JSON_UNESCAPED_UNICODE);
+        } elseif ($dailySources) {
+            $dsSettings = [];
+            foreach ($dailySources as $d) {
+                $dsSettings[(int) $d['id']] = DsSettings::serializeDsSettings($d);
+            }
+            $dsSettingsJson = json_encode($dsSettings, JSON_UNESCAPED_UNICODE);
+        }
+
+        $ctx = AccountContext::pageContext($request->getCookieParams());
 
         return $this->html($response, $this->render('daily.html.twig', $request, [
             'template' => $template,
@@ -355,6 +371,10 @@ final class PagesController
             'reuse_fields_json' => $reuseFieldsJson,
             'modal_data_sources' => $modalDataSources,
             'modal_fields' => $modalFields,
+            'modal_stores' => $ctx['accessible_stores'] ?? [],
+            'ds_settings' => $dsSettings,
+            'ds_settings_json' => $dsSettingsJson,
+            'pending_file_codes' => MeichongRules::PENDING_FILE_CODES,
         ]));
     }
 

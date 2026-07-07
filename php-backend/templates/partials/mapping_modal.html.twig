@@ -12,11 +12,17 @@
     <div class="flex-1 overflow-y-auto px-6 py-4">
       <div id="newMappingFields" class="hidden grid md:grid-cols-2 gap-4 mb-4">
         <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">数据源</label>
+          <label class="block text-xs font-medium text-slate-600 mb-1">绑定店铺</label>
           <select id="newDataSource" class="w-full border rounded-lg px-3 py-2 text-sm">
+            {% if modal_stores is defined and modal_stores %}
+            {% for store in modal_stores %}
+            <option value="{{ store.data_source_id }}" data-store-id="{{ store.id }}">{{ store.name }} · {{ store.platform }}</option>
+            {% endfor %}
+            {% else %}
             {% for ds in modal_data_sources %}
             <option value="{{ ds.id }}">{{ ds.name }}</option>
             {% endfor %}
+            {% endif %}
           </select>
         </div>
         <div>

@@ -76,7 +76,7 @@ final class SkuExport
                 'quantity' => self::pickNum($nd, self::QTY_CANDIDATES) ?: 1.0,
                 'sku_subtotal' => self::pickNum($nd, ['SKU Subtotal After Discount']),
                 'sku_discount' => self::pickNum($nd, ['SKU Platform Discount']),
-                'order_amount' => self::pickNum($nd, ['Order Amount', 'Order Amount1']),
+                'order_amount' => self::pickNum($nd, ['Order Amount']),
             ];
         }
         return $out;

@@ -267,14 +267,34 @@ function resolveFileKey(input, files) {
   return v;
 }
 
-function refreshFilterCols(blockEl) {
+function applyFilterColOpts(blockEl) {
+  const cols = blockEl._filterCols || [];
+  if (blockEl._dedupColCombo) blockEl._dedupColCombo.setOpts(cols);
+  (blockEl._joinKeyCombos || []).forEach((c) => c.setOpts(cols));
+  (blockEl._filterEntries || []).forEach((e) => e.colC?.setOpts(cols));
+}
+
+async function refreshBlockFilterCols(blockEl) {
   const cols = new Set();
+  const st = blockEl._sourceState;
+
   blockEl.querySelectorAll('.source-line').forEach((row) => {
     (row._colCombo?.options || []).forEach((c) => cols.add(c));
   });
-  blockEl._filterCols = [...cols];
-  if (blockEl._dedupColCombo) blockEl._dedupColCombo.setOpts(blockEl._filterCols);
-  (blockEl._filterRows || []).forEach((e) => e.colC?.setOpts(blockEl._filterCols));
+
+  if (st?.file && currentDataSourceId) {
+    const sheets = st.sheets?.length
+      ? st.sheets
+      : await fetchSheets(currentDataSourceId, st.file);
+    for (const sheet of sheets) {
+      const sheetCols = await fetchColumns(currentDataSourceId, st.file, sheet);
+      (sheetCols || []).forEach((c) => cols.add(c));
+    }
+  }
+
+  blockEl._filterCols = [...cols].sort((a, b) => a.localeCompare(b));
+  applyFilterColOpts(blockEl);
+  return blockEl._filterCols;
 }
 
 async function loadRowColumns(blockEl, row, sheet, keepCol) {
@@ -282,7 +302,7 @@ async function loadRowColumns(blockEl, row, sheet, keepCol) {
   if (!st?.file || !sheet) {
     row._colCombo?.setOpts([]);
     if (keepCol === undefined) row._colCombo?.set('');
-    refreshFilterCols(blockEl);
+    refreshBlockFilterCols(blockEl).catch(() => {});
     return;
   }
   const cols = await fetchColumns(currentDataSourceId, st.file, sheet);
@@ -290,7 +310,7 @@ async function loadRowColumns(blockEl, row, sheet, keepCol) {
   if (keepCol !== undefined) {
     row._colCombo.set(keepCol && cols.includes(keepCol) ? keepCol : '');
   }
-  refreshFilterCols(blockEl);
+  refreshBlockFilterCols(blockEl).catch(() => {});
 }
 
 function wireSourceLine(blockEl, row, { sheet_name: sheetName = '', column_header: col = '' } = {}) {
@@ -376,6 +396,7 @@ async function bootstrapBlockSource(blockEl, sources, { blockIdx } = {}) {
     const sheets = await fetchSheets(dsId, resolved);
     st.sheets = sheets;
     refreshAllRowSheets(blockEl, { keepCols: keepAll });
+    await refreshBlockFilterCols(blockEl);
     if (!sheets.length) toast(`「${resolved}」未找到 Sheet`, false);
   }
 
@@ -645,7 +666,7 @@ function buildSourceLine(blockEl, src, srcIdx) {
       return;
     }
     row.remove();
-    refreshFilterCols(blockEl);
+    refreshBlockFilterCols(blockEl).catch(() => {});
     reindexSourcesInBlock(blockEl);
   };
   return row;
@@ -734,7 +755,11 @@ function addFilterRow(partWrap, f = {}) {
     </select>
     <input class="flt-val flex-1 border rounded px-2 py-1 text-[11px]" placeholder="值，多个用逗号；介于填 小,大" value="${(f.values || []).join(', ')}">
     <button type="button" class="flt-rm text-red-400 text-xs px-1">×</button>`;
-  const colC = new SearchCombo(row.querySelector('.flt-col'), cols, { value: f.column || '', placeholder: '列头' });
+  const colC = new SearchCombo(row.querySelector('.flt-col'), cols, {
+    value: f.column || '',
+    placeholder: '搜索列头',
+    emptyHint: cols.length ? '无匹配列头' : '请先选择来源文件',
+  });
   const entry = {
     el: row,
     colC,
@@ -770,10 +795,24 @@ function toggleFilterPanel(partWrap) {
     return;
   }
   closeAllFilterPanels();
-  renderFilterPanel(partWrap);
-  panel.classList.remove('hidden');
-  partWrap.querySelector('.btn-open-filter')?.classList.add('is-active');
-  openFilterPartWrap = partWrap;
+  refreshBlockFilterCols(partWrap).then(() => {
+    const hint = partWrap.querySelector('.filter-col-hint');
+    const hasFile = !!partWrap._sourceState?.file;
+    const hasCols = (partWrap._filterCols || []).length > 0;
+    if (hint) {
+      hint.classList.toggle('hidden', hasFile && hasCols);
+      hint.textContent = !hasFile ? '请先选择上方来源文件，再配置筛选列头。' : '该来源文件暂无可选列头。';
+    }
+    renderFilterPanel(partWrap);
+    panel.classList.remove('hidden');
+    partWrap.querySelector('.btn-open-filter')?.classList.add('is-active');
+    openFilterPartWrap = partWrap;
+  }).catch(() => {
+    renderFilterPanel(partWrap);
+    panel.classList.remove('hidden');
+    partWrap.querySelector('.btn-open-filter')?.classList.add('is-active');
+    openFilterPartWrap = partWrap;
+  });
 }
 
 function partTemplate(part, idx) {
@@ -794,18 +833,6 @@ function partTemplate(part, idx) {
       <span class="text-[10px] text-emerald-600/90">① 组内多列按 ＋/− 先合并（同文件各行可选不同 Sheet）</span>
       <button type="button" class="btn-open-filter ml-auto text-[11px] text-link shrink-0">${filterCount > 0 ? `筛选(${filterCount})` : '筛选'}</button>
     </div>
-    <div class="filter-panel hidden mt-2 border border-slate-200 rounded-lg bg-white p-2.5">
-      <div class="flex items-center justify-between mb-1.5">
-        <span class="text-[11px] font-semibold text-slate-600">行筛选条件</span>
-        <button type="button" class="btn-close-filter text-[10px] text-slate-400 hover:text-slate-600">收起</button>
-      </div>
-      <p class="text-[10px] text-slate-400 mb-2">全部条件同时满足（AND）才计入本来源组。</p>
-      <div class="filter-list space-y-2 max-h-40 overflow-y-auto"></div>
-      <div class="flex justify-between items-center mt-2 pt-2 border-t border-slate-100">
-        <button type="button" class="btn-add-filter text-[11px] text-link">+ 添加条件</button>
-        <button type="button" class="btn-apply-filter text-[11px] btn-primary px-2.5 py-1">确定</button>
-      </div>
-    </div>
     <div class="group-file-row flex items-center gap-2 mb-2 px-0.5">
       <label class="text-[10px] text-slate-500 shrink-0 w-20">来源文件</label>
       <div class="g-block-file flex-1 min-w-0"></div>
@@ -813,6 +840,19 @@ function partTemplate(part, idx) {
     <input type="hidden" class="p-agg-stored" value="${part.aggregation || 'sum'}">
     <div class="sources-list space-y-0"></div>
     <button type="button" class="btn-add-src mt-1 mb-2 text-[11px] text-link">+ 添加列（组内 ＋/−，可选不同 Sheet）</button>
+    <div class="filter-panel hidden">
+      <div class="filter-panel-head">
+        <span class="filter-panel-title">行筛选条件</span>
+        <button type="button" class="btn-close-filter">收起</button>
+      </div>
+      <p class="filter-panel-desc">全部条件同时满足（AND）才计入本来源组。</p>
+      <p class="filter-col-hint hidden"></p>
+      <div class="filter-list"></div>
+      <div class="filter-panel-foot">
+        <button type="button" class="btn-add-filter text-[11px] text-link">+ 添加条件</button>
+        <button type="button" class="btn-apply-filter text-[11px] btn-primary px-2.5 py-1">确定</button>
+      </div>
+    </div>
     <div class="mb-2 dedup-section">
       <label class="inline-flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
         <input type="checkbox" class="p-enable-dedup" ${useDedup ? 'checked' : ''}>
@@ -833,7 +873,7 @@ function partTemplate(part, idx) {
         <div class="flex flex-wrap gap-4 text-[11px] text-slate-600">
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-exsample" ${part.exclude_sample ? 'checked' : ''}> 排除样品单</label>
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-exreview" ${part.exclude_review ? 'checked' : ''}> 排除刷单单</label>
-          <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-join" ${part.join_to_orders ? 'checked' : ''}> 关联日期主表有效行</label>
+          <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-join" ${part.join_to_orders ? 'checked' : ''}> 关联数据主表有效行</label>
         </div>
         <div class="join-keys-section ${part.join_to_orders ? '' : 'hidden'}">
           <div class="flex items-center justify-between mb-1">
@@ -1028,8 +1068,7 @@ async function openModal(mode, mappingId = null) {
   currentMappingId = mappingId;
   const modal = document.getElementById('mappingModal');
   document.getElementById('newMappingFields').classList.toggle('hidden', mode !== 'create');
-  const fromDaily = window.MAPPING_MODAL_CONTEXT === 'daily';
-  document.getElementById('btnDeleteMapping').classList.toggle('hidden', mode !== 'edit' || fromDaily);
+  document.getElementById('btnDeleteMapping').classList.toggle('hidden', mode !== 'edit');
 
   // 先弹出壳子，数据异步加载，避免长时间无反馈
   openWithTransition(modal);
@@ -1104,20 +1143,6 @@ function collectParts() {
   return [...document.querySelectorAll('.mapping-part-block')].map((el) => el._getData());
 }
 
-function markDailyRowConfigured(mappingId) {
-  if (!mappingId) return;
-  const row = document.querySelector(`.daily-row[data-mapping-id="${mappingId}"]`);
-  if (!row) return;
-  row.classList.remove('daily-row--unconfigured');
-  const tag = row.querySelector('.status-tag');
-  if (tag) {
-    tag.textContent = '自动';
-    tag.className = 'status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700';
-  }
-  const btn = row.querySelector('.btn-edit');
-  if (btn) btn.textContent = '规则';
-}
-
 async function saveMapping() {
   const body = {
     label: document.getElementById('mappingLabel')?.value.trim() || null,
@@ -1150,15 +1175,8 @@ async function saveMapping() {
   const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json();
   if (!res.ok) return toast(data.detail || '保存失败', false);
-  const savedId = currentMappingId || data.id;
   await refreshReuseFields();
   closeModal();
-  if (window.MAPPING_MODAL_CONTEXT === 'daily') {
-    toast('规则已保存');
-    markDailyRowConfigured(savedId);
-    setTimeout(() => location.reload(), 500);
-    return;
-  }
   toast('保存成功');
   setTimeout(() => location.reload(), 600);
 }
@@ -1191,7 +1209,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const pendingId = sessionStorage.getItem('openMappingId');
-  if (pendingId && window.MAPPING_MODAL_CONTEXT === 'daily') {
+  if (pendingId) {
     sessionStorage.removeItem('openMappingId');
     setTimeout(() => openModal('edit', parseInt(pendingId, 10)).catch(() => {}), 200);
   }

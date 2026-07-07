@@ -119,6 +119,8 @@ final class MappingRepo
         $p['exclude_review'] = (bool) ($p['exclude_review'] ?? false);
         $p['join_to_orders'] = (bool) ($p['join_to_orders'] ?? false);
         $p['only_sample'] = (bool) ($p['only_sample'] ?? false);
+        $p['benchmark_keys'] = Database::jsonDecode($p['benchmark_keys'] ?? null, []) ?: [];
+        $p['exclude_same_day_refund'] = (bool) ($p['exclude_same_day_refund'] ?? false);
         return $p;
     }
 
@@ -164,6 +166,8 @@ final class MappingRepo
                 'exclude_review' => $p['exclude_review'],
                 'join_to_orders' => $p['join_to_orders'],
                 'join_keys' => $p['join_keys'],
+                'benchmark_keys' => $p['benchmark_keys'] ?? [],
+                'exclude_same_day_refund' => $p['exclude_same_day_refund'] ?? false,
                 'only_sample' => $p['only_sample'],
             ], $parts),
         ];

@@ -106,6 +106,8 @@ final class StoreClone
                     'exclude_review' => $part['exclude_review'],
                     'join_to_orders' => $part['join_to_orders'],
                     'join_keys' => $part['join_keys'],
+                    'benchmark_keys' => $part['benchmark_keys'] ?? null,
+                    'exclude_same_day_refund' => $part['exclude_same_day_refund'] ?? 0,
                     'only_sample' => $part['only_sample'],
                     'sources' => $part['sources'],
                     'ref_field_code' => $part['ref_field_code'],

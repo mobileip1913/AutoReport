@@ -129,6 +129,8 @@ def part_rule_hints(part) -> list[str]:
         adv.append("排除样品")
     if getattr(part, "exclude_review", False):
         adv.append("排除刷单")
+    if getattr(part, "exclude_same_day_refund", False):
+        adv.append("排除当日退单")
     if getattr(part, "join_to_orders", False):
         adv.append("关联主表")
     if getattr(part, "only_sample", False):

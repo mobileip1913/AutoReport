@@ -92,7 +92,8 @@ final class ReportEngine
 
         // 刷单字段来自 config.review_orders 汇总（与 Python 版 review_field_values 一致）
         if ($dailyMode) {
-            $fieldValues = ReviewImport::reviewFieldValues($dsConfig);
+            $sameDayIds = $context?->sameDayRefundOrderIds;
+            $fieldValues = ReviewImport::reviewFieldValues($dsConfig, $sameDayIds);
         }
 
         // 迭代求值以支持「复用字段」引用（与 Python 版循环收敛逻辑一致）
@@ -106,7 +107,14 @@ final class ReportEngine
 
                 if ($parts) {
                     $partValues = array_map(
-                        fn($p) => FieldAggregator::resolvePartValue($p, $rows, $importFileNames, $context, $fieldValues),
+                        fn($p) => FieldAggregator::resolvePartValue(
+                            $p,
+                            $rows,
+                            $importFileNames,
+                            $context,
+                            $fieldValues,
+                            $dataSourceId,
+                        ),
                         $parts
                     );
                     $newVal = FieldAggregator::combineParts($parts, $partValues);

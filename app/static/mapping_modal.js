@@ -868,11 +868,14 @@ function partTemplate(part, idx) {
       </div>
     </div>
     <details class="mt-1" ${hasAdvanced(part) ? 'open' : ''}>
-      <summary class="text-[11px] text-link cursor-pointer select-none">高级规则（样品·刷单排除 / 跨表关联）</summary>
+      <summary class="text-[11px] text-link cursor-pointer select-none">高级规则（样品·刷单·当日退单 / 跨表关联）</summary>
       <div class="mt-2 space-y-2 border-t border-slate-200 pt-2">
         <div class="flex flex-wrap gap-4 text-[11px] text-slate-600">
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-exsample" ${part.exclude_sample ? 'checked' : ''}> 排除样品单</label>
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-exreview" ${part.exclude_review ? 'checked' : ''}> 排除刷单单</label>
+          <label class="inline-flex items-center gap-1" title="当日下单且当日退款的订单不计入本组取数">
+            <input type="checkbox" class="p-exsame-day-refund" ${part.exclude_same_day_refund ? 'checked' : ''}> 排除当日退单
+          </label>
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-join" ${part.join_to_orders ? 'checked' : ''}> 关联数据主表有效行</label>
         </div>
         <div class="join-keys-section ${part.join_to_orders ? '' : 'hidden'}">
@@ -1001,6 +1004,7 @@ function partTemplate(part, idx) {
       date_format: wrap._dateMeta?.date_format || null,
       exclude_sample: wrap.querySelector('.p-exsample').checked,
       exclude_review: wrap.querySelector('.p-exreview').checked,
+      exclude_same_day_refund: wrap.querySelector('.p-exsame-day-refund')?.checked || false,
       join_to_orders: joinOn,
       join_keys: join_keys.length ? join_keys : (joinOn ? [...DEFAULT_JOIN_KEYS] : []),
       benchmark_keys: readBenchmarkKeys(wrap),
@@ -1012,7 +1016,7 @@ function partTemplate(part, idx) {
 }
 
 function hasAdvanced(part) {
-  return !!(part.exclude_sample || part.exclude_review || part.join_to_orders);
+  return !!(part.exclude_sample || part.exclude_review || part.exclude_same_day_refund || part.join_to_orders);
 }
 
 function reindexParts() {

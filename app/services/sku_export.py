@@ -79,7 +79,7 @@ def collect_sku_rows(
             "quantity": _pick_num(nd, QTY_CANDIDATES) or 1.0,
             "sku_subtotal": _pick_num(nd, ["SKU Subtotal After Discount"]),
             "sku_discount": _pick_num(nd, ["SKU Platform Discount"]),
-            "order_amount": _pick_num(nd, ["Order Amount", "Order Amount1"]),
+            "order_amount": _pick_num(nd, ["Order Amount"]),
         })
     return out
 

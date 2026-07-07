@@ -59,7 +59,7 @@ SHEET_SPECS: dict[tuple[str, str], dict] = {
 REQUIRED_COLUMNS: dict[tuple[str, str], list[str]] = {
     ("订单", "OrderSKUList"): [
         "Order ID", "SKU ID", "Created Time", "Cancelled Time",
-        "Order Amount", "Order Amount1", "Payment platform discount",
+        "Order Amount", "Payment platform discount",
         "SKU Platform Discount", "SKU Subtotal After Discount", "SKU Subtotal Before Discount",
     ],
     ("退货退款单", "0"): ["Order ID", "Refund Time", "Return unit price"],

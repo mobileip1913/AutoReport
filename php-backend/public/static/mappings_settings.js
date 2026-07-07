@@ -1,7 +1,7 @@
 /** 报表配置页：日期主表 + 每日自动生成时间 */
 
 function settingsToast(msg, ok = true) {
-  const el = document.getElementById('toast');
+  const el = document.getElementById('toast') || document.getElementById('dailyToast');
   if (!el) return;
   el.textContent = msg;
   el.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white ${ok ? 'bg-emerald-600' : 'bg-red-600'}`;
@@ -163,6 +163,163 @@ function initTimePicker(card) {
   return { applyValue };
 }
 
+function updateReviewSidebarCounts(dsId, data) {
+  const card = document.querySelector(`.ds-settings-card[data-ds-id="${dsId}"]`);
+  if (!card || !data) return;
+  const orderCountEl = card.querySelector('.ds-review-order-count');
+  if (orderCountEl && data.review_order_distinct != null) {
+    orderCountEl.textContent = String(data.review_order_distinct);
+  }
+  const rowCount = card.querySelector('.ds-review-count');
+  if (rowCount && data.review_order_count != null) {
+    rowCount.textContent = String(data.review_order_count);
+  }
+}
+
+function updateReviewLogisticsSummary(dsId, data) {
+  const summary = data?.review_logistics_rule_summary;
+  if (!summary) return;
+  document.querySelectorAll(`.review-logistics-rule-summary[data-ds-id="${dsId}"]`).forEach((el) => {
+    el.textContent = `店铺刷单规则 · ${summary}`;
+  });
+  const modalSummary = document.querySelector('#reviewSettingsModal .review-logistics-modal-summary');
+  if (modalSummary) modalSummary.textContent = summary;
+}
+
+function updateReviewModalStats(modal, data) {
+  if (!modal || !data) return;
+  const rowsEl = modal.querySelector('.review-stat-rows');
+  const ordersEl = modal.querySelector('.review-stat-orders');
+  if (rowsEl && data.review_order_count != null) rowsEl.textContent = String(data.review_order_count);
+  if (ordersEl && data.review_order_distinct != null) ordersEl.textContent = String(data.review_order_distinct);
+}
+
+function bindReviewSettingsModal() {
+  const modal = document.getElementById('reviewSettingsModal');
+  if (!modal) return;
+
+  const panel = document.getElementById('reviewSettingsPanel');
+  const templateLink = modal.querySelector('.review-template-link');
+  const importInput = modal.querySelector('.review-import-input');
+  const importHint = modal.querySelector('.review-import-hint');
+  const perOrderInput = modal.querySelector('.review-logistics-per-order');
+  const excludeSameDayRefund = modal.querySelector('.review-logistics-exclude-same-day-refund');
+  const saveBtn = modal.querySelector('.btn-save-review-settings');
+  let activeDsId = null;
+
+  const setOpen = (open) => {
+    modal.classList.toggle('hidden', !open);
+    requestAnimationFrame(() => {
+      modal.classList.toggle('opacity-0', !open);
+      if (panel) panel.classList.toggle('scale-95', !open);
+    });
+    document.body.classList.toggle('overflow-hidden', open);
+  };
+
+  const showImportHint = (text, ok = true) => {
+    if (!importHint) return;
+    importHint.textContent = text;
+    importHint.classList.remove('hidden', 'text-red-500', 'text-emerald-600', 'text-slate-400');
+    importHint.classList.add(ok ? 'text-emerald-600' : 'text-red-500');
+  };
+
+  const fillFromSettings = (dsId) => {
+    const st = (window.DS_SETTINGS || {})[dsId] || {};
+    if (templateLink) templateLink.href = `/daily/review-template?data_source_id=${dsId}`;
+    if (perOrderInput) perOrderInput.value = String(st.review_logistics_per_order ?? 1);
+    if (excludeSameDayRefund) {
+      excludeSameDayRefund.checked = st.review_logistics_exclude_same_day_refund !== false;
+    }
+    updateReviewModalStats(modal, st);
+    updateReviewLogisticsSummary(dsId, st);
+    if (importHint) {
+      importHint.textContent = '';
+      importHint.classList.add('hidden');
+    }
+    if (importInput) importInput.value = '';
+  };
+
+  const applySettingsData = (dsId, data) => {
+    if (window.DS_SETTINGS) window.DS_SETTINGS[dsId] = { ...(window.DS_SETTINGS[dsId] || {}), ...data };
+    updateReviewModalStats(modal, data);
+    updateReviewLogisticsSummary(dsId, data);
+    updateReviewSidebarCounts(dsId, data);
+  };
+
+  document.querySelectorAll('.btn-review-settings').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeDsId = parseInt(btn.dataset.dsId, 10);
+      if (!activeDsId) return;
+      fillFromSettings(activeDsId);
+      setOpen(true);
+    });
+  });
+
+  modal.querySelectorAll('[data-close-review-settings]').forEach((el) => {
+    el.addEventListener('click', () => setOpen(false));
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !modal.classList.contains('hidden')) setOpen(false);
+  });
+
+  importInput?.addEventListener('change', async () => {
+    const file = importInput.files?.[0];
+    if (!file || !activeDsId) return;
+    showImportHint('导入中…', true);
+    importHint?.classList.remove('text-emerald-600');
+    importHint?.classList.add('text-slate-400');
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const res = await fetch(`/api/data-sources/${activeDsId}/review-orders/import`, { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = typeof data.detail === 'string'
+          ? data.detail
+          : (Array.isArray(data.detail) ? data.detail.join('；') : (data.errors?.join('；') || data.detail?.errors?.join('；') || '导入失败'));
+        showImportHint(msg, false);
+        return;
+      }
+      const merged = {
+        ...(window.DS_SETTINGS?.[activeDsId] || {}),
+        review_order_count: data.review_order_count ?? data.imported,
+        review_order_distinct: data.review_order_distinct ?? data.imported,
+        review_logistics_rule_summary: data.review_logistics_summary,
+      };
+      applySettingsData(activeDsId, merged);
+      const orders = data.review_order_distinct ?? data.imported;
+      let msg = `已导入 ${data.imported} 行 · ${orders} 个刷单订单`;
+      if (data.review_logistics_total != null) {
+        msg += ` · 物流费将计 $${Number(data.review_logistics_total).toFixed(2)}`;
+      }
+      showImportHint(msg, true);
+    } catch (e) {
+      showImportHint(e.message || '导入失败', false);
+    }
+    importInput.value = '';
+  });
+
+  saveBtn?.addEventListener('click', async () => {
+    if (!activeDsId) return;
+    try {
+      const data = await apiJson(`/api/data-sources/${activeDsId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          review_logistics_mode: 'per_order_fixed',
+          review_logistics_per_order: perOrderInput?.value || null,
+          review_logistics_exclude_same_day_refund: !!excludeSameDayRefund?.checked,
+        }),
+      });
+      applySettingsData(activeDsId, data);
+      settingsToast('刷单设置已保存');
+      setOpen(false);
+    } catch (e) {
+      settingsToast(e.message, false);
+    }
+  });
+}
+
 function bindSettingsCard(card) {
   const dsId = parseInt(card.dataset.dsId, 10);
   const meta = (window.DATA_SOURCE_META || {})[dsId] || {};
@@ -223,6 +380,9 @@ function bindSettingsCard(card) {
     if (initial.order_date_col) dateColSel.value = initial.order_date_col;
     if (initial.daily_generate_at && timePicker) timePicker.applyValue(initial.daily_generate_at);
     if (reviewCount) reviewCount.textContent = String(initial.review_order_count || 0);
+    const orderCountEl = card.querySelector('.ds-review-order-count');
+    if (orderCountEl) orderCountEl.textContent = String(initial.review_order_distinct || 0);
+    updateReviewLogisticsSummary(dsId, initial);
   }).catch(() => {});
 
   fileSel.addEventListener('change', () => {
@@ -247,6 +407,7 @@ function bindSettingsCard(card) {
       settingsToast('店铺设置已保存');
       const summary = card.querySelector('.ds-date-summary');
       if (summary) summary.textContent = data.date_master_summary || '未配置';
+      if (window.DS_SETTINGS) window.DS_SETTINGS[dsId] = { ...(window.DS_SETTINGS[dsId] || {}), ...data };
     } catch (e) {
       settingsToast(e.message, false);
     }
@@ -298,5 +459,6 @@ function bindExportButtons() {
 
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.ds-settings-card').forEach(bindSettingsCard);
+  bindReviewSettingsModal();
   bindExportButtons();
 });

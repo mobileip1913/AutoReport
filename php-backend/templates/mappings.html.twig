@@ -35,6 +35,7 @@
 
 {% for ds in data_sources %}
 {% set bound_store = store_by_ds_id[ds.id] ?? null %}
+{% set review_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_logistics', 'mc_review_cost'] %}
 <section class="mb-8">
   <div class="flex items-center gap-2 mb-3">
     <h2 class="text-lg font-semibold">{{ bound_store ? bound_store.name : ds.name }}</h2>
@@ -108,7 +109,7 @@
           </div>
         </div>
         <input type="hidden" class="ds-daily-time" value="{{ st ? st.daily_generate_at : '' }}">
-        <p class="text-[10px] text-slate-400 mt-1.5">昨日日报 · Asia/Shanghai · 刷单 <span class="ds-review-count text-slate-600">{{ st ? st.review_order_count : 0 }}</span> 条</p>
+        <p class="text-[10px] text-slate-400 mt-1.5">昨日日报 · Asia/Shanghai · 刷单 <span class="ds-review-count text-slate-600">{{ st ? st.review_order_count : 0 }}</span> 行 · <span class="ds-review-order-count text-slate-600">{{ st ? st.review_order_distinct : 0 }}</span> 单</p>
         <button type="button" class="btn-save-ds-settings mt-2 w-full px-3 py-1.5 btn-primary text-sm whitespace-nowrap">保存</button>
         <button type="button" class="btn-export-config mt-2 w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap" data-ds-id="{{ ds.id }}">导出 JSON</button>
       </aside>
@@ -149,34 +150,13 @@
             <div class="text-[10px] font-mono text-slate-400">{field:{{ row.line_code }}}</div>
           </td>
           <td class="px-4 py-3 text-xs text-slate-600 font-mono">
-            {% if row.is_manual %}
-            <span class="text-amber-700">财务在<a href="/daily" class="text-link hover:underline">日报输出</a>页填写</span>
-            {% elseif m.parts %}
-              {% for p in m.parts|sort((a, b) => a.sort_order <=> b.sort_order) %}
-              <div class="mb-0.5">
-                {% if p.ref_field_code %}
-                <span class="aux-text">{% if not loop.first and p.combine_op == 'subtract' %}− {% elseif not loop.first %}＋ {% endif %}[复用 {field:{{ p.ref_field_code }}}]</span>
-                {% elseif p.sources and p.sources|length > 1 %}
-                  {% for s in p.sources %}<span>{% if loop.index > 1 %}+ {% endif %}{% if s.source_file_keyword %}[{{ s.source_file_keyword }}]{% endif %}{{ s.sheet_name }}.{{ s.column_header }}</span>{% endfor %}
-                {% else %}
-                {% if p.source_file_keyword %}<span class="text-amber-600">[{{ p.source_file_keyword }}]</span>{% endif %}{{ p.sheet_name }}.{{ p.column_header }}
-                {% endif %}
-                {% if not p.ref_field_code %}<span class="text-sky-600">({{ p.aggregation }})</span>{% endif %}
-              </div>
-              {% endfor %}
-            {% elseif row.pending_file %}
-            <span class="text-amber-600">待接入专用文件</span>
-            {% else %}
-            <span class="text-slate-300">未配置取数</span>
-            {% endif %}
+            {% set ds_id = ds.id %}{% set ds_settings_entry = st %}
+            {% include "partials/report_rule_summary.html.twig" %}
           </td>
           <td class="px-4 py-3 text-xs text-slate-500">{{ m.format_type ?: 'usd' }}</td>
           <td class="px-4 py-3">
-            {% if row.is_manual %}
-            <span class="text-slate-400 text-xs">—</span>
-            {% else %}
-            <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
-            {% endif %}
+            {% set ds_id = ds.id %}
+            {% include "partials/report_rule_actions.html.twig" %}
           </td>
         </tr>
         {% endfor %}
@@ -220,6 +200,9 @@
                 {% if p.source_file_keyword %}<span class="text-amber-600">[{{ p.source_file_keyword }}]</span>{% endif %}{{ p.sheet_name }}.{{ p.column_header }}
                 {% endif %}
                 {% if not p.ref_field_code %}<span class="text-sky-600">({{ p.aggregation }})</span>{% endif %}
+                {% for hint in p|part_rule_hints %}
+                <span class="text-indigo-600/90 text-[10px] ml-1">· {{ hint }}</span>
+                {% endfor %}
               </div>
               {% endfor %}
             {% elseif item.line_code in pending_file_codes %}
@@ -248,13 +231,15 @@
 {% set modal_fields = fields %}
 {% include "partials/mapping_modal.html.twig" %}
 
+{% include "partials/review_settings_modal.html.twig" %}
+
 <script>window.CURRENT_STORE_DS_ID = {{ current_store ? current_store.data_source_id : (data_sources ? data_sources[0].id : null) }};</script>
 <script>window.DATA_SOURCE_META = {{ meta_json|raw }};</script>
 <script>window.DS_SETTINGS = {{ ds_settings_json|raw }};</script>
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json|raw }};</script>
 <script>window.MAPPING_MODAL_CONTEXT = 'mappings';</script>
-<script src="/static/mappings_settings.js?v=20260707i"></script>
-<script src="/static/mapping_modal.js?v=20260707n"></script>
+<script src="/static/mappings_settings.js?v=20260707u"></script>
+<script src="/static/mapping_modal.js?v=20260707u"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const hash = location.hash;

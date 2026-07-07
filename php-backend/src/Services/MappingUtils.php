@@ -108,4 +108,73 @@ final class MappingUtils
         $used[$name] = true;
         return $name;
     }
+
+    private const ROW_FILTER_HINTS = [
+        'nonempty' => '非空',
+        'empty' => '为空',
+        'eq' => '=',
+        'ne' => '≠',
+        'in' => '∈',
+        'not_in' => '∉',
+        'contains' => '含',
+        'not_contains' => '不含',
+        'starts_with' => '开头',
+        'ends_with' => '结尾',
+        'gt' => '>',
+        'gte' => '≥',
+        'lt' => '<',
+        'lte' => '≤',
+        'between' => '介于',
+    ];
+
+    /** @return string[] */
+    public static function partRuleHints(array $part): array
+    {
+        $hints = [];
+        $dateCol = trim((string) ($part['date_filter_column'] ?? ''));
+        if ($dateCol !== '') {
+            $hints[] = "{$dateCol}=日报";
+        }
+        foreach ($part['row_filters'] ?? [] as $cond) {
+            $col = trim((string) ($cond['column'] ?? ''));
+            $op = $cond['op'] ?? 'eq';
+            $values = $cond['values'] ?? [];
+            if (is_string($values) || is_int($values) || is_float($values)) {
+                $values = [$values];
+            }
+            $label = self::ROW_FILTER_HINTS[$op] ?? $op;
+            if (in_array($op, ['nonempty', 'empty'], true)) {
+                if ($col !== '') {
+                    $hints[] = "{$col}{$label}";
+                }
+            } elseif (in_array($op, ['eq', 'ne', 'contains', 'not_contains', 'starts_with', 'ends_with', 'gt', 'gte', 'lt', 'lte'], true)) {
+                $val = isset($values[0]) ? trim((string) $values[0]) : '';
+                if ($col !== '' && $val !== '') {
+                    $hints[] = "{$col}{$label}{$val}";
+                }
+            } elseif (in_array($op, ['in', 'not_in', 'between'], true) && $col !== '') {
+                $vals = implode('、', array_map('strval', array_slice($values, 0, 3)));
+                if ($vals !== '') {
+                    $hints[] = "{$col}{$label}{$vals}";
+                }
+            }
+        }
+        $adv = [];
+        if (!empty($part['exclude_sample'])) {
+            $adv[] = '排除样品';
+        }
+        if (!empty($part['exclude_review'])) {
+            $adv[] = '排除刷单';
+        }
+        if (!empty($part['join_to_orders'])) {
+            $adv[] = '关联主表';
+        }
+        if (!empty($part['only_sample'])) {
+            $adv[] = '仅样品';
+        }
+        if ($adv) {
+            $hints[] = implode('、', $adv);
+        }
+        return $hints;
+    }
 }

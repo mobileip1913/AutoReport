@@ -191,24 +191,24 @@
           <td class="px-4 py-3 text-xs text-slate-600 font-mono">
             {% if m.parts %}
               {% for p in m.parts|sort(attribute='sort_order') %}
-              <div class="mb-0.5">
+              <div class="rule-summary-line">
                 {% if p.ref_field_code %}
-                <span class="aux-text">{% if not loop.first and p.combine_op == 'subtract' %}− {% elif not loop.first %}＋ {% endif %}[复用 {field:{{ p.ref_field_code }}}]</span>
+                <span class="rule-summary-mono">{% if not loop.first and p.combine_op == 'subtract' %}− {% elif not loop.first %}＋ {% endif %}[复用 {field:{{ p.ref_field_code }}}]</span>
                 {% elif p.sources and p.sources|length > 1 %}
-                  {% for s in p.sources %}<span>{% if loop.index > 1 %}+ {% endif %}{% if s.source_file_keyword %}[{{ s.source_file_keyword }}]{% endif %}{{ s.sheet_name }}.{{ s.column_header }}</span>{% endfor %}
+                  {% for s in p.sources %}<span class="rule-summary-mono">{% if loop.index > 1 %}+ {% endif %}{% if s.source_file_keyword %}[{{ s.source_file_keyword }}]{% endif %}{{ s.sheet_name }}.{{ s.column_header }}</span>{% endfor %}
                 {% else %}
-                {% if p.source_file_keyword %}<span class="text-amber-600">[{{ p.source_file_keyword }}]</span>{% endif %}{{ p.sheet_name }}.{{ p.column_header }}
+                <span class="rule-summary-mono">{% if p.source_file_keyword %}[{{ p.source_file_keyword }}]{% endif %}{{ p.sheet_name }}.{{ p.column_header }}</span>
                 {% endif %}
-                {% if not p.ref_field_code %}<span class="text-sky-600">({{ p.aggregation }})</span>{% endif %}
+                {% if not p.ref_field_code %}<span class="rule-summary-meta">({{ p.aggregation }})</span>{% endif %}
                 {% for hint in p | part_rule_hints %}
-                <span class="text-indigo-600/90 text-[10px] ml-1">· {{ hint }}</span>
+                <span class="rule-summary-hint">· {{ hint }}</span>
                 {% endfor %}
               </div>
               {% endfor %}
             {% elif item.line_code in pending_file_codes %}
-            <span class="text-amber-600">待接入专用文件（Catalog 中尚无对应表，出报=0）</span>
+            <span class="rule-summary-text">预留占位，手动输入或上传文件</span>
             {% else %}
-            <span class="text-slate-400">未配置取数</span>
+            <span class="rule-summary-empty">未配置取数</span>
             {% endif %}
           </td>
           <td class="px-4 py-3">
@@ -239,7 +239,7 @@
 <script>window.DS_SETTINGS = {{ ds_settings_json | safe }};</script>
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
 <script src="/static/mappings_settings.js?v=20260707u"></script>
-<script src="/static/mapping_modal.js?v=20260707u"></script>
+<script src="/static/mapping_modal.js?v=20260707sdr"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const hash = location.hash;

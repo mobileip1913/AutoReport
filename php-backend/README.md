@@ -35,6 +35,9 @@ php-backend/
 │   │   └── ApiController.php     # API 路由（对等 routers/api.py）
 │   └── Services/          # 业务服务（与 app/services/ 一一对应）
 ├── templates/             # Twig 模板（与 app/templates/ 一一对应）
+├── docs/                  # PHP 后端专项文档
+│   ├── 生成日报流程与实现.md
+│   └── PHP报表取数与SQL实现.md
 ├── composer.json
 └── .env
 ```
@@ -66,6 +69,15 @@ PHP 没有进程内后台调度，改用系统计划任务每分钟执行：
 ```
 
 脚本按各店铺 `daily_generate_at`（Asia/Shanghai）到点生成昨日正式日报，`data/scheduler_state.json` 保证同日只出一次。
+
+## 文档
+
+| 文档 | 说明 |
+|------|------|
+| [docs/生成日报流程与实现.md](docs/生成日报流程与实现.md) | 点击「生成日报」后的完整链路与代码索引 |
+| [docs/PHP报表取数与SQL实现.md](docs/PHP报表取数与SQL实现.md) | 模板/映射/Catalog/SQL 与内存聚合分工 |
+
+仓库根目录 `docs/` 另有全栈 PRD、技术架构等通用文档。
 
 ## 迁移 Checklist
 

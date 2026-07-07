@@ -16,6 +16,7 @@ final class FieldAggregator
 {
     public const ORDER_ID_CANDIDATES = ['Order ID', 'Related order ID', 'Order/adjustment ID', '订单号'];
     public const SKU_ID_CANDIDATES = ['SKU ID', 'Sku Id', 'Sku ID', 'SKU Id'];
+    public const REFUND_DATE_COLUMNS = ['Refund Time', '退款时间'];
 
     public const AGGREGATION_LABELS = [
         'sum' => '求和 sum — 所有行相加（SKU 级折扣）',
@@ -237,6 +238,41 @@ final class FieldAggregator
             json_encode(DsSettings::DEFAULT_JOIN_KEYS) => $joinSet(DsSettings::DEFAULT_JOIN_KEYS),
         ];
 
+        $placedTodayIds = [];
+        $refundedTodayIds = [];
+        if ($reportD !== null) {
+            $refundDateFmt = $cfg['refund_date_format'] ?? 'eu';
+            foreach ($rows as $r) {
+                $nd = self::normalized($r['row_data']);
+                $oid = self::extract($r['row_data'], self::ORDER_ID_CANDIDATES);
+                if ($oid === '') {
+                    continue;
+                }
+                if ($orderSheet && $r['sheet_name'] === $orderSheet && $orderDateCol) {
+                    $placed = self::parseDate($nd[$orderDateCol] ?? null, $orderDateFmt);
+                    if ($placed === $reportD) {
+                        $placedTodayIds[$oid] = true;
+                    }
+                }
+                foreach (self::REFUND_DATE_COLUMNS as $col) {
+                    if (array_key_exists($col, $nd)) {
+                        $refunded = self::parseDate($nd[$col] ?? null, $refundDateFmt);
+                        if ($refunded === $reportD) {
+                            $refundedTodayIds[$oid] = true;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        $sameDayRefundIds = [];
+        foreach ($placedTodayIds as $oid => $_) {
+            if (isset($refundedTodayIds[$oid])) {
+                $sameDayRefundIds[$oid] = true;
+            }
+        }
+
         return new DailyContext(
             reportDate: $reportD,
             sampleOrderIds: $sampleIds,
@@ -247,6 +283,7 @@ final class FieldAggregator
             validOrderIds: $validIds,
             validJoinMap: $validJoinMap,
             validMasterRows: $validRowNorms,
+            sameDayRefundOrderIds: $sameDayRefundIds,
         );
     }
 
@@ -619,12 +656,80 @@ final class FieldAggregator
     }
 
     /** @param array<string, float> $fieldValues */
-    public static function resolvePartValue(array $part, array $rows, array $importFileNames, ?DailyContext $context, array $fieldValues): float
-    {
+    public static function resolvePartValue(
+        array $part,
+        array $rows,
+        array $importFileNames,
+        ?DailyContext $context,
+        array $fieldValues,
+        ?int $dataSourceId = null,
+    ): float {
+        $benchmarkKeys = array_values(array_filter(
+            array_map(fn($k) => trim((string) $k), $part['benchmark_keys'] ?? []),
+            fn($k) => $k !== ''
+        ));
         if (!empty($part['ref_field_code'])) {
+            if ($benchmarkKeys && $dataSourceId) {
+                return self::aggregateLineCodeWithBenchmark(
+                    $dataSourceId,
+                    (string) $part['ref_field_code'],
+                    $rows,
+                    $importFileNames,
+                    $context,
+                    $benchmarkKeys
+                );
+            }
             return (float) ($fieldValues[$part['ref_field_code']] ?? 0.0);
         }
-        return self::aggregatePart($rows, $part, $importFileNames, $context);
+        $effective = $benchmarkKeys ? self::joinOverridePart($part, $benchmarkKeys) : $part;
+        return self::aggregatePart($rows, $effective, $importFileNames, $context);
+    }
+
+    /** @param string[] $benchmarkKeys */
+    private static function joinOverridePart(array $part, array $benchmarkKeys): array
+    {
+        $out = $part;
+        $out['join_keys'] = $benchmarkKeys;
+        $out['join_to_orders'] = true;
+        return $out;
+    }
+
+    /** @param string[] $benchmarkKeys */
+    public static function aggregateMappingWithBenchmark(
+        array $mapping,
+        array $rows,
+        array $importFileNames,
+        ?DailyContext $context,
+        array $benchmarkKeys,
+    ): float {
+        $parts = $mapping['parts'] ?? [];
+        usort($parts, fn($a, $b) => ($a['sort_order'] ?? 0) <=> ($b['sort_order'] ?? 0));
+        $values = array_map(
+            fn($p) => self::aggregatePart($rows, self::joinOverridePart($p, $benchmarkKeys), $importFileNames, $context),
+            $parts
+        );
+        return self::combineParts($parts, $values);
+    }
+
+    /** @param string[] $benchmarkKeys */
+    public static function aggregateLineCodeWithBenchmark(
+        int $dataSourceId,
+        string $lineCode,
+        array $rows,
+        array $importFileNames,
+        ?DailyContext $context,
+        array $benchmarkKeys,
+    ): float {
+        foreach (MappingRepo::forDataSource($dataSourceId, false) as $mapping) {
+            if (MappingUtils::mappingLineCode($mapping) !== $lineCode) {
+                continue;
+            }
+            if (empty($mapping['parts'])) {
+                return 0.0;
+            }
+            return self::aggregateMappingWithBenchmark($mapping, $rows, $importFileNames, $context, $benchmarkKeys);
+        }
+        return 0.0;
     }
 
     /** @param array[] $parts @param float[] $partValues */

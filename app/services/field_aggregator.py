@@ -346,6 +346,7 @@ def _filter_rows(
     row_filters = getattr(part, "row_filters", None) or []
     exclude_sample = bool(getattr(part, "exclude_sample", False))
     exclude_review = bool(getattr(part, "exclude_review", False))
+    exclude_same_day_refund = bool(getattr(part, "exclude_same_day_refund", False))
     join_to_orders = bool(getattr(part, "join_to_orders", False))
     only_sample = bool(getattr(part, "only_sample", False))
 
@@ -364,13 +365,15 @@ def _filter_rows(
             if d != context.report_date:
                 continue
 
-        if context is not None and (exclude_sample or exclude_review or join_to_orders or only_sample):
+        if context is not None and (exclude_sample or exclude_review or exclude_same_day_refund or join_to_orders or only_sample):
             oid = _extract(row.row_data, ORDER_ID_CANDIDATES)
             if only_sample and oid not in context.sample_order_ids:
                 continue
             if exclude_sample and oid in context.sample_order_ids:
                 continue
             if exclude_review and oid in context.review_order_ids:
+                continue
+            if exclude_same_day_refund and oid in context.same_day_refund_order_ids:
                 continue
             if join_to_orders:
                 join_keys = getattr(part, "join_keys", None) or []
@@ -408,6 +411,7 @@ def _source_part(base: FieldMappingPart, src: dict) -> FieldMappingPart:
         row_filters=base.row_filters or [],
         exclude_sample=base.exclude_sample,
         exclude_review=base.exclude_review,
+        exclude_same_day_refund=getattr(base, "exclude_same_day_refund", False),
         join_to_orders=base.join_to_orders,
         join_keys=base.join_keys or [],
         only_sample=getattr(base, "only_sample", False),

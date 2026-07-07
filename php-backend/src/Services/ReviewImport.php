@@ -14,6 +14,10 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
  */
 final class ReviewImport
 {
+    public const REVIEW_LOGISTICS_MODE_FIXED = 'per_order_fixed';
+    public const REVIEW_LOGISTICS_MODE_IMPORT = 'from_import';
+    public const DEFAULT_REVIEW_LOGISTICS_PER_ORDER = 1.0;
+
     /** [内部键, 模板列名, 是否必填] */
     public const REVIEW_COLUMNS = [
         ['order_id', 'Order ID', true],
@@ -37,6 +41,78 @@ final class ReviewImport
     public static function templateHeaders(): array
     {
         return array_map(fn($c) => $c[1], self::REVIEW_COLUMNS);
+    }
+
+    public static function reviewLogisticsMode(array $cfg): string
+    {
+        $mode = trim((string) ($cfg['review_logistics_mode'] ?? ''));
+        return $mode === self::REVIEW_LOGISTICS_MODE_IMPORT
+            ? self::REVIEW_LOGISTICS_MODE_IMPORT
+            : self::REVIEW_LOGISTICS_MODE_FIXED;
+    }
+
+    public static function reviewLogisticsPerOrder(array $cfg): float
+    {
+        $raw = $cfg['review_logistics_per_order'] ?? null;
+        if ($raw === null || trim((string) $raw) === '') {
+            return self::DEFAULT_REVIEW_LOGISTICS_PER_ORDER;
+        }
+        return max(0.0, FieldAggregator::toNumber($raw));
+    }
+
+    public static function reviewLogisticsExcludeSameDayRefund(array $cfg): bool
+    {
+        return (bool) ($cfg['review_logistics_exclude_same_day_refund'] ?? false);
+    }
+
+    /**
+     * @param array[] $reviews
+     * @param array<string, true>|null $excludeOrderIds
+     */
+    public static function distinctReviewOrderCount(array $reviews, ?array $excludeOrderIds = null): int
+    {
+        $exclude = $excludeOrderIds ?? [];
+        $ids = [];
+        foreach ($reviews as $r) {
+            $oid = trim((string) ($r['order_id'] ?? ''));
+            if ($oid !== '' && !isset($exclude[$oid])) {
+                $ids[$oid] = true;
+            }
+        }
+        return count($ids);
+    }
+
+    public static function reviewLogisticsRuleSummary(array $cfg): string
+    {
+        $reviews = $cfg['review_orders'] ?? [];
+        $orderCount = self::distinctReviewOrderCount($reviews);
+        $perOrder = self::reviewLogisticsPerOrder($cfg);
+        $suffix = self::reviewLogisticsExcludeSameDayRefund($cfg) ? ' · 排除当日退单' : '';
+        return sprintf('按单固定 $%g/单 × %d 单刷单订单%s', $perOrder, $orderCount, $suffix);
+    }
+
+    /**
+     * @param array[] $reviews
+     * @param array<string, true>|null $excludeSameDayOrderIds
+     * @return array{row_count: int, order_count: int, logistics_total: float, logistics_mode: string, logistics_per_order: float}
+     */
+    public static function reviewImportStats(
+        array $reviews,
+        array $cfg,
+        ?array $excludeSameDayOrderIds = null,
+    ): array {
+        $exclude = [];
+        if (self::reviewLogisticsExcludeSameDayRefund($cfg) && $excludeSameDayOrderIds) {
+            $exclude = $excludeSameDayOrderIds;
+        }
+        $orderCount = self::distinctReviewOrderCount($reviews, $exclude);
+        return [
+            'row_count' => count($reviews),
+            'order_count' => $orderCount,
+            'logistics_total' => $orderCount * self::reviewLogisticsPerOrder($cfg),
+            'logistics_mode' => self::REVIEW_LOGISTICS_MODE_FIXED,
+            'logistics_per_order' => self::reviewLogisticsPerOrder($cfg),
+        ];
     }
 
     /** @return array<string, string> 小写列头（含去空格版本）=> 内部键 */
@@ -70,9 +146,8 @@ final class ReviewImport
         $spreadsheet = new Spreadsheet();
         $ws = $spreadsheet->getActiveSheet();
         $ws->setTitle('刷单清单');
-        $ws->fromArray(['说明：每行一条刷单 SKU；Order ID、SKU ID 必填，金额列填数字；导入将覆盖本店已有刷单清单'], null, 'A1');
+        $ws->fromArray(['说明：每行一条刷单 SKU；Order ID、SKU ID 必填；若店铺设为「按单固定物流费」，物流费用列可留空'], null, 'A1');
         $ws->fromArray(self::templateHeaders(), null, 'A2');
-        // 示例行 Order ID / SKU ID 强制文本，避免长数字变科学计数法
         $ws->getStyle('A3:B3')->getNumberFormat()->setFormatCode('@');
         $ws->setCellValueExplicit('A3', '1234567890123456789', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
         $ws->setCellValueExplicit('B3', '9876543210', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
@@ -110,7 +185,6 @@ final class ReviewImport
     }
 
     /**
-     * 解析上传内容，返回 [review_rows, errors]。
      * @return array{0: array[], 1: string[]}
      */
     public static function parseReviewUpload(string $content): array
@@ -162,7 +236,7 @@ final class ReviewImport
         $parsed = [];
         $seen = [];
         foreach (array_slice($rows, $headerRowIdx + 1, null, true) as $idx => $row) {
-            $lineNo = $idx + 1; // Excel 行号（rows 为 0 基）
+            $lineNo = $idx + 1;
             $row = $row ?? [];
             $allEmpty = true;
             foreach ($row as $c) {
@@ -186,7 +260,7 @@ final class ReviewImport
                 continue;
             }
             if (str_starts_with($oid, '1234567890') && $sku === '9876543210') {
-                continue; // 跳过模板示例行
+                continue;
             }
 
             if ($oid === '') {
@@ -232,8 +306,11 @@ final class ReviewImport
         return [$parsed, $errors];
     }
 
-    /** @return array<string, float> code => 累计值 */
-    public static function reviewFieldValues(array $dsConfig): array
+    /**
+     * @param array<string, true>|null $sameDayRefundOrderIds
+     * @return array<string, float>
+     */
+    public static function reviewFieldValues(array $dsConfig, ?array $sameDayRefundOrderIds = null): array
     {
         $reviews = $dsConfig['review_orders'] ?? [];
         $out = [];
@@ -242,13 +319,18 @@ final class ReviewImport
         }
         foreach ($reviews as $row) {
             foreach (self::REVIEW_FIELD_CODES as $key => $code) {
+                if ($key === 'logistics') {
+                    continue;
+                }
                 $out[$code] += FieldAggregator::toNumber($row[$key] ?? null);
             }
         }
+        $stats = self::reviewImportStats($reviews, $dsConfig, $sameDayRefundOrderIds);
+        $out[self::REVIEW_FIELD_CODES['logistics']] = $stats['logistics_total'];
         return $out;
     }
 
-    /** @return string[] 去重排序后的 Order ID 列表 */
+    /** @return string[] */
     public static function reviewOrderIdsFromRows(array $rows): array
     {
         $ids = [];
@@ -292,10 +374,14 @@ final class ReviewImport
             'review_orders' => $reviewRows,
             'review_order_ids' => self::reviewOrderIdsFromRows($reviewRows),
         ]);
+        $stats = self::reviewImportStats($reviewRows, $cfg);
         return [
             'ok' => true,
             'imported' => count($reviewRows),
             'review_order_count' => count($cfg['review_orders'] ?? []),
+            'review_order_distinct' => $stats['order_count'],
+            'review_logistics_total' => $stats['logistics_total'],
+            'review_logistics_summary' => self::reviewLogisticsRuleSummary($cfg),
         ];
     }
 }
