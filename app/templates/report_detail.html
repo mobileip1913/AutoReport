@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}报表 #{{ run.id }} - AutoReport{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <a href="/reports" class="text-sm text-indigo-600 hover:underline">← 返回列表</a>
+  <h1 class="text-2xl font-bold mt-2">日经营报表</h1>
+  <div class="flex flex-wrap gap-3 mt-2 text-sm text-slate-600">
+    <span>模板: <strong>{{ run.template.name }}</strong></span>
+    <span>日期: <strong>{{ run.report_date }}</strong></span>
+    <span>店铺: <strong>{{ run.store_name }}</strong></span>
+    <span>
+      {% if run.is_test %}
+      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs">测试报表</span>
+      {% else %}
+      <span class="px-2 py-0.5 rounded bg-green-100 text-green-700 text-xs">正式报表 v{{ run.template.version }}</span>
+      {% endif %}
+    </span>
+  </div>
+</div>
+
+<div class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden max-w-2xl">
+  <table class="w-full">
+    <thead class="bg-indigo-600 text-white text-sm">
+      <tr>
+        <th class="px-6 py-3 text-left">指标</th>
+        <th class="px-6 py-3 text-right">数值</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for v in values %}
+      <tr class="border-b border-slate-100 {% if '错误' in v.display_value %}bg-red-50{% endif %}">
+        <td class="px-6 py-4 font-medium">{{ v.line_label }}</td>
+        <td class="px-6 py-4 text-right font-mono text-lg {% if v.display_value.startswith('¥') and v.line_label in ['毛利润','净利润'] %}text-indigo-700 font-bold{% endif %}">
+          {{ v.display_value }}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<details class="mt-6 max-w-2xl">
+  <summary class="text-sm text-slate-500 cursor-pointer">查看计算公式</summary>
+  <table class="w-full mt-3 text-xs bg-slate-50 rounded-lg overflow-hidden">
+    {% for v in values %}
+    <tr class="border-b border-slate-200">
+      <td class="px-4 py-2">{{ v.line_label }}</td>
+      <td class="px-4 py-2 font-mono text-slate-600">{{ v.expression }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</details>
+{% endblock %}

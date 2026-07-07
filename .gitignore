@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+*.log
+
+# 本地数据库与导入产物（勿提交）
+data/*.db
+data/**/*.db
+data/uploads/
+data/exports/

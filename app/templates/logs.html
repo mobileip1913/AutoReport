@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}映射日志 - AutoReport{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-2">映射日志</h1>
+<p class="text-slate-600 mb-6 text-sm">列头对不上时记录告警，不阻断导入（Demo 行为）。生产环境可扩展为邮件/企微通知。</p>
+
+<div class="space-y-3">
+  {% for log in logs %}
+  <div class="bg-white rounded-xl shadow border border-slate-100 p-4">
+    <div class="flex items-center gap-3 mb-2">
+      <span class="px-2 py-0.5 rounded text-xs font-medium {% if log.level == 'warning' %}bg-amber-100 text-amber-800{% else %}bg-red-100 text-red-800{% endif %}">
+        {{ log.level|upper }}
+      </span>
+      <span class="text-xs text-slate-400">{{ log.created_at | cst }}</span>
+    </div>
+    <p class="text-sm text-slate-800">{{ log.message }}</p>
+    {% if log.context %}
+    <details class="mt-2">
+      <summary class="text-xs text-indigo-600 cursor-pointer">查看详情</summary>
+      <pre class="mt-2 text-xs bg-slate-50 p-3 rounded overflow-x-auto">{{ log.context }}</pre>
+    </details>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="bg-white rounded-xl p-8 text-center text-slate-500">暂无日志。可上传 <code>sample_data/amazon_us_store_drift.xlsx</code> 触发列头漂移告警。</div>
+  {% endfor %}
+</div>
+{% endblock %}

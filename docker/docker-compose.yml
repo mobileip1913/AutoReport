@@ -1,0 +1,29 @@
+services:
+  mysql:
+    image: mysql:8
+    container_name: autoreport-mysql
+    restart: unless-stopped
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-AutoReport@2026}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-autoreport}
+      MYSQL_USER: ${MYSQL_USER:-autoreport}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-AutoReport@2026}
+      TZ: Asia/Shanghai
+    volumes:
+      - autoreport_mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u${MYSQL_USER:-autoreport}", "-p${MYSQL_PASSWORD:-AutoReport@2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  autoreport_mysql_data:

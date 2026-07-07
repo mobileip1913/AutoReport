@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}报表模板 - AutoReport{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">报表模板</h1>
+<div class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 text-left text-slate-500">
+      <tr>
+        <th class="px-6 py-3">名称</th>
+        <th class="px-6 py-3">描述</th>
+        <th class="px-6 py-3">状态</th>
+        <th class="px-6 py-3">版本</th>
+        <th class="px-6 py-3">负责人</th>
+        <th class="px-6 py-3"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in templates_list %}
+      <tr class="border-t border-slate-100 hover:bg-slate-50">
+        <td class="px-6 py-4 font-medium">{{ t.name }}</td>
+        <td class="px-6 py-4 text-slate-600">{{ t.description or '-' }}</td>
+        <td class="px-6 py-4">
+          {% if t.status.value == 'published' %}
+          <span class="px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs">已发布</span>
+          {% else %}
+          <span class="px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs">草稿</span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4">v{{ t.version }}</td>
+        <td class="px-6 py-4">{{ t.owner }}</td>
+        <td class="px-6 py-4"><a href="/templates/{{ t.id }}" class="text-indigo-600 hover:underline">配置 →</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

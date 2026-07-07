@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}日报输出 - AutoReport{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-bold">日报输出</h1>
+  <p class="text-sm text-slate-500 mt-1">按《美宠日报规则-TK》计算，输出对应「日报模板」的分组结构。每个数据源的计算逻辑可在
+    <a href="/mappings" class="text-indigo-600 hover:underline">字段映射</a> 页配置。</p>
+</div>
+
+<div class="bg-white rounded-xl shadow border border-slate-100 p-5 mb-6">
+  <form method="post" action="/daily/generate" class="flex flex-wrap items-end gap-4">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">数据源（已配置日报逻辑）</label>
+      <select name="data_source_id" class="border rounded-lg px-3 py-2 text-sm min-w-[260px]">
+        {% for ds in daily_sources %}
+        <option value="{{ ds.id }}">{{ ds.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">报表日期</label>
+      <input type="date" name="report_date" value="{{ run.report_date if run else '2026-06-22' }}"
+             class="border rounded-lg px-3 py-2 text-sm">
+    </div>
+    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-5 py-2 rounded-lg">
+      生成日报
+    </button>
+    {% if not daily_sources %}
+    <span class="text-sm text-red-500">暂无已配置日报的数据源</span>
+    {% endif %}
+  </form>
+</div>
+
+{% if run %}
+<div class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden">
+  <div class="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-100">
+    <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-slate-600">
+      {% if meta %}
+      <span>项目: <strong>{{ meta.get('项目') }}</strong></span>
+      <span>平台: <strong>{{ meta.get('平台') }}</strong></span>
+      <span>区域: <strong>{{ meta.get('区域') }}</strong></span>
+      <span>店铺: <strong>{{ meta.get('店铺名称') }}</strong></span>
+      {% endif %}
+      <span>日期: <strong>{{ run.report_date }}</strong></span>
+      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs">测试报表 #{{ run.id }}</span>
+    </div>
+    <a href="/daily/{{ run.id }}/export"
+       class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+      导出 Excel
+    </a>
+  </div>
+
+  <div class="p-6 space-y-5">
+    {% for g in groups %}
+    <div>
+      <div class="text-xs font-semibold text-indigo-600 uppercase tracking-wide mb-2">{{ g.title }}</div>
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+        {% for item in g.metrics %}
+        <div class="rounded-xl border border-slate-200 p-3 {% if '利润' in item.label %}bg-indigo-50 border-indigo-200{% else %}bg-slate-50/60{% endif %}">
+          <div class="text-[11px] text-slate-500 mb-1 truncate" title="{{ item.label }}">{{ item.label }}</div>
+          <div class="text-lg font-mono font-semibold {% if '利润' in item.label %}text-indigo-700{% elif item.value == '$0.00' %}text-slate-400{% else %}text-slate-800{% endif %}">
+            {{ item.value }}
+          </div>
+          <div class="text-[10px] text-slate-400 font-mono mt-1 truncate" title="{{ item.expression }}">{{ item.expression }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<p class="text-xs text-slate-400 mt-4">
+  注：显示为 <span class="font-mono">$0.00</span> 的指标（刷单/样品/广告/成本/固定费用/框返）为占位字段，待接入对应数据源后自动计算；利润为透明估算口径。
+</p>
+{% endif %}
+{% endblock %}

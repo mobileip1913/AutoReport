@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}概览 - AutoReport{% endblock %}
+{% block content %}
+<div class="mb-8">
+  <h1 class="text-3xl font-bold text-slate-900">跨境电商自动报表 Demo</h1>
+  <p class="mt-2 text-slate-600">财务自定义模板与字段映射 → 自动解析 Excel → 生成统一口径日经营报表</p>
+</div>
+
+<div class="grid md:grid-cols-3 gap-6 mb-8">
+  <div class="bg-white rounded-xl shadow p-6 border border-slate-100">
+    <div class="text-sm text-slate-500">数据源</div>
+    <div class="text-3xl font-bold text-indigo-600 mt-1">{{ data_sources|length }}</div>
+    <div class="text-xs text-slate-400 mt-2">Amazon / Shopee 示例店铺</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-6 border border-slate-100">
+    <div class="text-sm text-slate-500">报表模板</div>
+    <div class="text-3xl font-bold text-indigo-600 mt-1">{{ templates_list|length }}</div>
+    <div class="text-xs text-slate-400 mt-2">支持草稿 → 测试 → 发布</div>
+  </div>
+  <div class="bg-white rounded-xl shadow p-6 border border-slate-100">
+    <div class="text-sm text-slate-500">最近生成</div>
+    <div class="text-3xl font-bold text-indigo-600 mt-1">{{ recent_runs|length }}</div>
+    <div class="text-xs text-slate-400 mt-2">含测试与正式报表</div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-6">
+  <section class="bg-white rounded-xl shadow border border-slate-100 p-6">
+    <h2 class="text-lg font-semibold mb-4">快速开始</h2>
+    <ol class="space-y-3 text-sm text-slate-700 list-decimal list-inside">
+      <li>在 <a href="/mappings" class="text-indigo-600 underline">字段映射</a> 查看逻辑字段与 Excel 列头对应关系</li>
+      <li>在 <a href="/templates/1" class="text-indigo-600 underline">报表模板</a> 编辑指标行与公式，点击「测试生成」</li>
+      <li>确认结果无误后点击「发布模板」，即可用于正式日报</li>
+      <li>上传列头变更的 Excel，在 <a href="/logs" class="text-indigo-600 underline">映射日志</a> 查看告警</li>
+    </ol>
+  </section>
+
+  <section class="bg-white rounded-xl shadow border border-slate-100 p-6">
+    <h2 class="text-lg font-semibold mb-4">最近映射告警</h2>
+    {% if recent_logs %}
+    <ul class="space-y-2">
+      {% for log in recent_logs %}
+      <li class="text-sm p-3 bg-amber-50 border border-amber-100 rounded-lg">
+        <span class="text-amber-700 font-medium">{{ log.level|upper }}</span>
+        <span class="text-slate-700 ml-2">{{ log.message }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-slate-500">暂无告警</p>
+    {% endif %}
+  </section>
+</div>
+
+<section class="mt-6 bg-white rounded-xl shadow border border-slate-100 p-6">
+  <h2 class="text-lg font-semibold mb-4">报表模板</h2>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b">
+        <tr>
+          <th class="py-2">名称</th>
+          <th>状态</th>
+          <th>版本</th>
+          <th>负责人</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in templates_list %}
+        <tr class="border-b border-slate-50">
+          <td class="py-3 font-medium">{{ t.name }}</td>
+          <td>
+            {% if t.status.value == 'published' %}
+            <span class="px-2 py-0.5 rounded-full bg-green-100 text-green-700 text-xs">已发布 v{{ t.version }}</span>
+            {% else %}
+            <span class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs">草稿</span>
+            {% endif %}
+          </td>
+          <td>{{ t.version }}</td>
+          <td>{{ t.owner }}</td>
+          <td><a href="/templates/{{ t.id }}" class="text-indigo-600 hover:underline">进入 →</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

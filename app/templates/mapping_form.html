@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{% if mapping %}编辑映射{% else %}新增映射{% endif %} - AutoReport{% endblock %}
+{% block content %}
+<div class="mb-6">
+  <a href="/mappings" class="text-sm text-indigo-600 hover:underline">← 返回字段映射</a>
+  <h1 class="text-2xl font-bold mt-2">{% if mapping %}编辑映射{% else %}新增映射{% endif %}</h1>
+</div>
+
+{% if error %}
+<div class="mb-4 p-4 bg-red-50 border border-red-100 rounded-lg text-red-800 text-sm">{{ error }}</div>
+{% endif %}
+
+<div class="bg-white rounded-xl shadow border border-slate-100 p-6 max-w-xl">
+  <form method="post" action="{% if mapping %}/mappings/{{ mapping.id }}/edit{% else %}/mappings/new{% endif %}" class="space-y-5">
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">数据源</label>
+      <select name="data_source_id" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+        {% if mapping %}disabled{% endif %}>
+        {% for ds in data_sources %}
+        <option value="{{ ds.id }}"
+          {% if mapping and mapping.data_source_id == ds.id %}selected{% elif form and form.data_source_id == ds.id %}selected{% endif %}>
+          {{ ds.name }} ({{ ds.platform }})
+        </option>
+        {% endfor %}
+      </select>
+      {% if mapping %}
+      <input type="hidden" name="data_source_id" value="{{ mapping.data_source_id }}">
+      {% endif %}
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">逻辑字段</label>
+      <select name="logical_field_id" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
+        {% if mapping %}disabled{% endif %}>
+        {% for f in fields %}
+        <option value="{{ f.id }}"
+          {% if mapping and mapping.logical_field_id == f.id %}selected{% elif form and form.logical_field_id == f.id %}selected{% endif %}>
+          {{ f.name }} ({{ f.code }})
+        </option>
+        {% endfor %}
+      </select>
+      {% if mapping %}
+      <input type="hidden" name="logical_field_id" value="{{ mapping.logical_field_id }}">
+      {% endif %}
+      <p class="text-xs text-slate-400 mt-1">同一数据源下，每个逻辑字段只能有一条映射</p>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">Sheet 名称</label>
+      <input name="sheet_name" required
+        value="{{ mapping.sheet_name if mapping else (form.sheet_name if form else '') }}"
+        placeholder="如：订单明细"
+        class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">列头（主列名）</label>
+      <input name="column_header" required
+        value="{{ mapping.column_header if mapping else (form.column_header if form else '') }}"
+        placeholder="如：Sales Amount"
+        class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">别名（防列头漂移）</label>
+      <input name="aliases"
+        value="{% if mapping and mapping.aliases %}{{ mapping.aliases|join(', ') }}{% elif form and form.aliases %}{{ form.aliases }}{% endif %}"
+        placeholder="多个别名用英文逗号分隔，如：Revenue, 销售金额"
+        class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+      <p class="text-xs text-slate-400 mt-1">平台改列名时，把新列名加进别名即可，不必改报表模板</p>
+    </div>
+
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">聚合方式</label>
+      <select name="aggregation" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
+        {% set agg = mapping.aggregation if mapping else (form.aggregation if form else 'sum') %}
+        <option value="sum" {% if agg == 'sum' %}selected{% endif %}>sum — 求和</option>
+        <option value="count" {% if agg == 'count' %}selected{% endif %}>count — 计数</option>
+        <option value="avg" {% if agg == 'avg' %}selected{% endif %}>avg — 平均值</option>
+      </select>
+    </div>
+
+    <div class="flex gap-3 pt-2">
+      <button type="submit" class="px-5 py-2.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">保存</button>
+      <a href="/mappings" class="px-5 py-2.5 border border-slate-300 rounded-lg text-sm hover:bg-slate-50">取消</a>
+      {% if mapping %}
+      <button type="submit" formaction="/mappings/{{ mapping.id }}/delete" formmethod="post"
+        class="ml-auto px-5 py-2.5 border border-red-200 text-red-600 rounded-lg text-sm hover:bg-red-50"
+        onclick="return confirm('确定删除这条映射？')">删除</button>
+      {% endif %}
+    </div>
+  </form>
+</div>
+{% endblock %}
