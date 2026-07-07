@@ -964,8 +964,11 @@ async function openModal(mode, mappingId = null) {
       if (session !== modalSession) return;
       currentDataSourceId = data.data_source_id;
       currentLogicalFieldCode = data.logical_field_code || '';
-      document.getElementById('modalTitle').textContent = `${data.logical_field_name} · ${data.data_source_name}`;
-      document.getElementById('modalSubtitle').textContent = `{field:${data.logical_field_code}}`;
+      document.getElementById('modalTitle').textContent = data.label || data.logical_field_name || '配置取数行';
+      document.getElementById('modalSubtitle').textContent = `{field:${data.line_code || data.logical_field_code}}`;
+      document.getElementById('mappingLabel').value = data.label || data.logical_field_name || '';
+      document.getElementById('mappingGroup').value = data.report_group || '';
+      document.getElementById('mappingSort').value = String(data.sort_order || 0);
       document.getElementById('mappingDesc').value = data.description || '';
       parts = flatPartsToBlocks(data.parts.length ? data.parts : [{ combine_op: 'add', aggregation: 'sum', dedup_keys: [] }]);
       globalDatePickers = null;
@@ -1006,6 +1009,10 @@ function collectParts() {
 
 async function saveMapping() {
   const body = {
+    label: document.getElementById('mappingLabel')?.value.trim() || null,
+    report_group: document.getElementById('mappingGroup')?.value.trim() || null,
+    sort_order: parseInt(document.getElementById('mappingSort')?.value, 10) || 0,
+    line_type: 'fetch',
     description: document.getElementById('mappingDesc').value.trim() || null,
     parts: collectParts(),
   };
@@ -1025,7 +1032,8 @@ async function saveMapping() {
     method = 'PUT';
   } else {
     body.data_source_id = parseInt(document.getElementById('newDataSource').value, 10);
-    body.logical_field_id = parseInt(document.getElementById('newLogicalField').value, 10);
+    const lfVal = document.getElementById('newLogicalField').value;
+    if (lfVal) body.logical_field_id = parseInt(lfVal, 10);
   }
 
   const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

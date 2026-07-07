@@ -1,126 +1,93 @@
 {% extends "base.html" %}
-{% block title %}数据导入 - AutoReport{% endblock %}
+{% block title %}数据源 - AutoReport{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold mb-2">数据导入</h1>
-<p class="text-slate-600 mb-6 text-sm">模拟 RPA 每日上传 Excel。Demo 已预导入示例数据，也可上传 <code>sample_data/</code> 下的文件测试列头漂移。</p>
+<h1 class="text-2xl font-bold mb-2">数据源</h1>
+<p class="text-slate-600 mb-6 text-sm">
+  业务数据由 <strong>MySQL</strong> 提供（Catalog 目录 + Fact 事实表）。Web 端不再上传 Excel；
+  字段映射与日报出数均直接读库。
+</p>
 
-<div class="mb-6 bg-indigo-50 border border-indigo-100 rounded-xl p-5">
-  <h2 class="font-semibold text-indigo-900 mb-2">海外电商模拟包（推荐测试配置）</h2>
-  <p class="text-sm text-indigo-800 mb-3">
-    文件 <code class="bg-white px-1 rounded">sample_data/tiktok_uk_store_20250623.xlsx</code>
-    — TikTok Shop UK 风格，4 个业务 Sheet + 英文列头，<strong>无预置字段映射</strong>，需你在「字段映射」自行配置。
-  </p>
-  <div class="text-xs text-indigo-700 space-y-1 font-mono bg-white/60 rounded-lg p-3">
-    <div>Order Details — 16 笔订单（UK/DE/FR/ES，含退款状态）</div>
-    <div>Advertising — 10 条广告日报（Video/Live/Search/Brand）</div>
-    <div>Returns — 2 笔退货明细</div>
-    <div>Settlement Summary — 结算与广告扣费摘要</div>
-  </div>
-  <p class="text-xs text-indigo-600 mt-3">
-    需导入 <strong>两个文件</strong> 测跨文件组合：① tiktok_uk_store_20250623.xlsx ② tiktok_uk_settlement_20250623.xlsx<br>
-    参数：TikTok Shop UK ｜ 2025-06-23 ｜ TT-UK-017
-  </p>
+<div class="mb-6 bg-emerald-50 border border-emerald-100 rounded-xl p-5">
+  <h2 class="font-semibold text-emerald-900 mb-2">Demo 数据说明</h2>
+  <ul class="text-sm text-emerald-800 space-y-1 list-disc list-inside">
+    <li>映射弹窗的文件 / Sheet / 列头来自 <code class="bg-white px-1 rounded">catalog_*</code> 表</li>
+    <li>日报聚合从 <code class="bg-white px-1 rounded">fact_mc_*</code> 事实表取数</li>
+    <li>连接串在服务端 <code class="bg-white px-1 rounded">.env</code> 的 <code class="bg-white px-1 rounded">DATABASE_URL</code> 配置</li>
+  </ul>
 </div>
 
-<div class="grid lg:grid-cols-2 gap-6">
+<div class="grid lg:grid-cols-2 gap-6 mb-6">
   <div class="bg-white rounded-xl shadow border border-slate-100 p-6">
-    <h2 class="text-lg font-semibold mb-4">上传 Excel</h2>
-    <form id="uploadForm" class="space-y-4" enctype="multipart/form-data">
-      <div>
-        <label class="block text-sm text-slate-600 mb-1">数据源</label>
-        <select name="data_source_id" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-          {% for ds in data_sources %}
-          <option value="{{ ds.id }}">{{ ds.name }} ({{ ds.platform }})</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label class="block text-sm text-slate-600 mb-1">报表日期</label>
-        <input name="report_date" value="2025-06-23" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-      </div>
-      <div>
-        <label class="block text-sm text-slate-600 mb-1">店铺编码</label>
-        <input name="store_name" value="TT-UK-017" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm">
-      </div>
-      <div>
-        <label class="block text-sm text-slate-600 mb-1">Excel 文件</label>
-        <input type="file" name="file" accept=".xlsx,.xls" class="w-full text-sm">
-      </div>
-      <button type="submit" class="w-full py-2.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">导入并解析</button>
-    </form>
-    <div id="uploadResult" class="mt-3 text-sm hidden"></div>
-  </div>
-
-  <div class="bg-white rounded-xl shadow border border-slate-100 p-6">
-    <h2 class="text-lg font-semibold mb-3">推荐字段映射（TikTok Shop）</h2>
-    <table class="w-full text-xs">
-      <thead class="text-slate-500 border-b">
+    <h2 class="text-lg font-semibold mb-4">已注册数据源</h2>
+    {% if data_sources %}
+    <table class="w-full text-sm">
+      <thead class="text-left text-slate-500 border-b">
         <tr>
-          <th class="py-2 text-left">逻辑字段</th>
-          <th class="py-2 text-left">Sheet</th>
-          <th class="py-2 text-left">列头</th>
+          <th class="py-2">名称</th>
+          <th class="py-2">平台</th>
+          <th class="py-2">Catalog 文件数</th>
         </tr>
       </thead>
-      <tbody class="font-mono">
-        <tr class="border-b border-slate-50"><td class="py-2">销售额</td><td>Order Details</td><td>Gross Sales (USD)</td></tr>
-        <tr class="border-b border-slate-50"><td class="py-2">订单数</td><td>Order Details</td><td>Order ID</td></tr>
-        <tr class="border-b border-slate-50"><td class="py-2">平台费用</td><td>Order Details</td><td>Platform Commission (USD)</td></tr>
-        <tr class="border-b border-slate-50"><td class="py-2">退款额</td><td>Order Details</td><td>Refund Amount (USD)</td></tr>
-        <tr class="border-b border-slate-50"><td class="py-2">广告花费</td><td>Advertising</td><td>Ad Spend (USD)</td></tr>
-        <tr><td class="py-2">广告点击</td><td>Advertising</td><td>Clicks</td></tr>
+      <tbody>
+        {% for ds in data_sources %}
+        <tr class="border-b border-slate-50">
+          <td class="py-3 font-medium">{{ ds.name }}</td>
+          <td class="py-3 text-slate-600">{{ ds.platform }}</td>
+          <td class="py-3">{{ catalog_counts.get(ds.id, 0) }}</td>
+        </tr>
+        {% endfor %}
       </tbody>
     </table>
-    <a href="/mappings/new" class="inline-block mt-4 text-sm text-indigo-600 hover:underline">去配置字段映射 →</a>
+    {% else %}
+    <p class="text-sm text-slate-500">暂无数据源，请检查数据库初始化。</p>
+    {% endif %}
+  </div>
+
+  <div class="bg-white rounded-xl shadow border border-slate-100 p-6">
+    <h2 class="text-lg font-semibold mb-3">下一步</h2>
+    <ol class="text-sm text-slate-700 space-y-2 list-decimal list-inside">
+      <li>在 <a href="/mappings" class="text-indigo-600 hover:underline">字段映射</a> 配置取数规则</li>
+      <li>在 <a href="/daily" class="text-indigo-600 hover:underline">日报输出</a> 选择日期生成报表</li>
+      <li>生产环境由运维/RPA 维护 MySQL 数据，本 Demo 不负责灌库</li>
+    </ol>
   </div>
 </div>
 
-<section class="mt-6 bg-white rounded-xl shadow border border-slate-100 p-6">
-  <h2 class="text-lg font-semibold mb-4">导入历史</h2>
+<section class="bg-white rounded-xl shadow border border-slate-100 p-6">
+  <h2 class="text-lg font-semibold mb-4">数据同步批次（ETL 记录）</h2>
+  {% if etl_batches %}
   <table class="w-full text-sm">
     <thead class="text-left text-slate-500 border-b">
       <tr>
-        <th class="py-2">文件</th>
-        <th>数据源</th>
-        <th>日期</th>
-        <th>店铺</th>
-        <th>行数</th>
-        <th>时间</th>
+        <th class="py-2">批次</th>
+        <th class="py-2">数据源</th>
+        <th class="py-2">店铺</th>
+        <th class="py-2">说明</th>
+        <th class="py-2">状态</th>
+        <th class="py-2">时间</th>
       </tr>
     </thead>
     <tbody>
-      {% for imp in imports %}
+      {% for batch in etl_batches %}
       <tr class="border-b border-slate-50">
-        <td class="py-3 font-mono text-xs">{{ imp.file_name }}</td>
-        <td class="py-3">{{ imp.data_source.name }}</td>
-        <td class="py-3">{{ imp.report_date }}</td>
-        <td class="py-3">{{ imp.store_name }}</td>
-        <td class="py-3">{{ imp.row_count }}</td>
-        <td class="py-3 text-slate-400">{{ imp.created_at | cst('%m-%d %H:%M') }}</td>
+        <td class="py-3 font-mono text-xs">#{{ batch.id }}</td>
+        <td class="py-3">{{ batch.data_source.name if batch.data_source else batch.data_source_id }}</td>
+        <td class="py-3">{{ batch.store_name }}</td>
+        <td class="py-3 text-xs text-slate-600">{{ batch.source_desc or '—' }}</td>
+        <td class="py-3">
+          {% if batch.status == 'success' %}
+          <span class="px-2 py-0.5 rounded bg-green-100 text-green-700 text-xs">成功</span>
+          {% else %}
+          <span class="px-2 py-0.5 rounded bg-amber-100 text-amber-700 text-xs">{{ batch.status }}</span>
+          {% endif %}
+        </td>
+        <td class="py-3 text-slate-400">{{ batch.created_at | cst('%Y-%m-%d %H:%M') }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  {% else %}
+  <p class="text-sm text-slate-500">暂无 ETL 批次记录。若 Catalog 已有数据，可能是生产库直接灌入、未写批次表。</p>
+  {% endif %}
 </section>
-
-<script>
-document.getElementById('uploadForm').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const fd = new FormData(form);
-  const result = document.getElementById('uploadResult');
-  result.className = 'mt-3 text-sm p-3 rounded-lg bg-blue-50 text-blue-800';
-  result.textContent = '导入中...';
-  result.classList.remove('hidden');
-  try {
-    const res = await fetch('/api/import', { method: 'POST', body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || '导入失败');
-    result.textContent = `导入成功：${data.row_count} 行。请查看映射日志。`;
-    setTimeout(() => location.reload(), 1500);
-  } catch (err) {
-    result.className = 'mt-3 text-sm p-3 rounded-lg bg-red-50 text-red-800';
-    result.textContent = err.message;
-  }
-});
-</script>
 {% endblock %}

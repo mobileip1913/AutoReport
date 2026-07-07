@@ -18,7 +18,7 @@ from app.models import (
     TemplateLine,
     TemplateStatus,
 )
-from app.services.report_engine import generate_report
+from app.services.report_engine import generate_report, generate_report_for_data_source
 from app.services.schema import get_all_meta
 from app.services.timezone import to_cst
 
@@ -47,34 +47,12 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/templates", response_class=HTMLResponse)
 def list_templates(request: Request, db: Session = Depends(get_db)):
-    templates_list = db.query(ReportTemplate).order_by(ReportTemplate.updated_at.desc()).all()
-    return templates.TemplateResponse(
-        "templates.html",
-        {"request": request, "templates_list": templates_list},
-    )
+    return RedirectResponse(url="/mappings", status_code=303)
 
 
 @router.get("/templates/{template_id}", response_class=HTMLResponse)
 def template_detail(template_id: int, request: Request, db: Session = Depends(get_db)):
-    template = db.query(ReportTemplate).filter(ReportTemplate.id == template_id).first()
-    if not template:
-        raise HTTPException(status_code=404, detail="模板不存在")
-    lines = (
-        db.query(TemplateLine)
-        .filter(TemplateLine.template_id == template_id)
-        .order_by(TemplateLine.sort_order)
-        .all()
-    )
-    data_sources = db.query(DataSource).all()
-    return templates.TemplateResponse(
-        "template_detail.html",
-        {
-            "request": request,
-            "template": template,
-            "lines": lines,
-            "data_sources": data_sources,
-        },
-    )
+    return RedirectResponse(url="/mappings", status_code=303)
 
 
 @router.post("/templates/{template_id}/test")
@@ -118,25 +96,53 @@ def unpublish_template(template_id: int, db: Session = Depends(get_db)):
 
 @router.get("/mappings", response_class=HTMLResponse)
 def list_mappings(request: Request, db: Session = Depends(get_db)):
-    mappings = db.query(FieldMapping).all()
+    from app.services.mapping_utils import is_formula_line, mapping_label, mapping_line_code
+
+    mappings = (
+        db.query(FieldMapping)
+        .order_by(FieldMapping.data_source_id, FieldMapping.sort_order, FieldMapping.id)
+        .all()
+    )
     fields = db.query(LogicalField).all()
     data_sources = db.query(DataSource).all()
     meta = get_all_meta(db, data_sources)
     reuse_fields: dict[int, list[dict]] = {}
     for ds in data_sources:
         reuse_fields[ds.id] = [
-            {
-                "code": m.logical_field.code,
-                "name": m.logical_field.name,
-            }
+            {"code": mapping_line_code(m), "name": mapping_label(m)}
             for m in mappings
-            if m.data_source_id == ds.id and (m.parts or (m.sheet_name and m.column_header))
+            if m.data_source_id == ds.id and not is_formula_line(m)
         ]
+
+    grouped: dict[int, list[dict]] = {ds.id: [] for ds in data_sources}
+    group_titles: dict[int, list[str]] = {ds.id: [] for ds in data_sources}
+    auxiliary: dict[int, list[dict]] = {ds.id: [] for ds in data_sources}
+    for m in mappings:
+        item = {
+            "mapping": m,
+            "is_formula": is_formula_line(m),
+            "label": mapping_label(m),
+            "line_code": mapping_line_code(m),
+        }
+        if (m.sort_order or 0) <= 0 and not m.report_group:
+            auxiliary.setdefault(m.data_source_id, []).append(item)
+            continue
+        title = m.report_group or "未分组"
+        bucket = grouped.setdefault(m.data_source_id, [])
+        titles = group_titles.setdefault(m.data_source_id, [])
+        if title not in titles:
+            titles.append(title)
+        item["group"] = title
+        bucket.append(item)
+
     return templates.TemplateResponse(
         "mappings.html",
         {
             "request": request,
             "mappings": mappings,
+            "grouped": grouped,
+            "group_titles": group_titles,
+            "auxiliary": auxiliary,
             "fields": fields,
             "data_sources": data_sources,
             "meta_json": json.dumps(meta, ensure_ascii=False),
@@ -224,15 +230,26 @@ def daily_report_page(
 
 
 def _run_source_id(db: Session, run) -> int:
-    """根据生成报表时使用的数据源推断（日报场景下取存在 config 的数据源）。"""
-    last = run.report_date
+    """推断报表对应的数据源：优先 run 记录，其次 config 店铺名，最后 legacy 导入表。"""
+    if getattr(run, "data_source_id", None):
+        return run.data_source_id
+
+    for ds in db.query(DataSource).filter(DataSource.config.isnot(None)).all():
+        store = (ds.config or {}).get("meta", {}).get("店铺名称")
+        if store == run.store_name or ds.name == run.store_name:
+            return ds.id
+
     imp = (
         db.query(DataImport)
         .filter(DataImport.store_name == run.store_name)
         .order_by(DataImport.created_at.desc())
         .first()
     )
-    return imp.data_source_id if imp else 0
+    if imp:
+        return imp.data_source_id
+
+    first = db.query(DataSource).filter(DataSource.config.isnot(None)).first()
+    return first.id if first else 0
 
 
 @router.post("/daily/generate")
@@ -241,19 +258,12 @@ def daily_generate(
     report_date: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    from app.services.meichong_rules import MEICHONG_TEMPLATE_NAME
-
     ds = db.query(DataSource).filter(DataSource.id == data_source_id).first()
     if not ds:
         raise HTTPException(status_code=404, detail="数据源不存在")
-    template = (
-        db.query(ReportTemplate).filter(ReportTemplate.name == MEICHONG_TEMPLATE_NAME).first()
-    )
-    if not template:
-        raise HTTPException(status_code=404, detail="日报模板不存在")
 
     store_name = (ds.config or {}).get("meta", {}).get("店铺名称") or ds.name
-    run = generate_report(db, template, ds.id, report_date, store_name, is_test=True)
+    run = generate_report_for_data_source(db, ds.id, report_date, store_name, is_test=True)
     return RedirectResponse(url=f"/daily?run_id={run.id}", status_code=303)
 
 
@@ -271,6 +281,8 @@ def daily_export(run_id: int, db: Session = Depends(get_db)):
         .all()
     )
     ds = db.query(DataSource).filter(DataSource.id == _run_source_id(db, run)).first()
+    if not ds:
+        raise HTTPException(status_code=404, detail="未找到报表对应的数据源")
     path = export_daily_excel(ds, run, values)
     return FileResponse(
         path,
@@ -281,9 +293,20 @@ def daily_export(run_id: int, db: Session = Depends(get_db)):
 
 @router.get("/imports", response_class=HTMLResponse)
 def list_imports(request: Request, db: Session = Depends(get_db)):
-    imports = db.query(DataImport).order_by(DataImport.created_at.desc()).all()
+    from app.models import CatalogFile, EtlBatch
+
     data_sources = db.query(DataSource).all()
+    etl_batches = db.query(EtlBatch).order_by(EtlBatch.created_at.desc()).limit(20).all()
+    catalog_counts = {
+        ds.id: db.query(CatalogFile).filter(CatalogFile.data_source_id == ds.id).count()
+        for ds in data_sources
+    }
     return templates.TemplateResponse(
         "imports.html",
-        {"request": request, "imports": imports, "data_sources": data_sources},
+        {
+            "request": request,
+            "data_sources": data_sources,
+            "etl_batches": etl_batches,
+            "catalog_counts": catalog_counts,
+        },
     )

@@ -8,7 +8,10 @@ from app.database import Base, SessionLocal, engine
 from app.routers import api, pages
 from app.services.migrate import ensure_logical_fields, migrate_legacy_mappings, run_migrations
 from app.services.meichong_rules import ensure_meichong_rules
+from app.services.report_line_sync import backfill_mapping_line_codes, sync_report_lines
+from app.services.meichong_rules import TEMPLATE_GROUPS, TEMPLATE_LINES
 from app.services.seed import ensure_meichong_datasource
+from app.models import DataSource, FieldMapping
 
 app = FastAPI(title="AutoReport Demo", description="跨境电商自动报表 Demo")
 
@@ -32,5 +35,11 @@ def on_startup():
         ensure_logical_fields(db)
         migrate_legacy_mappings(db)
         ensure_meichong_rules(db)
+        backfill_mapping_line_codes(db)
+        for ds in db.query(DataSource).filter(DataSource.config.isnot(None)).all():
+            if not db.query(FieldMapping).filter(
+                FieldMapping.data_source_id == ds.id, FieldMapping.report_group.isnot(None)
+            ).count():
+                sync_report_lines(db, ds.id, TEMPLATE_LINES, TEMPLATE_GROUPS, only_missing=True)
     finally:
         db.close()

@@ -125,6 +125,8 @@ class EtlBatch(Base):
     status = Column(String(20), default="success")
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    data_source = relationship("DataSource")
+
 
 class LogicalField(Base):
     __tablename__ = "logical_fields"
@@ -140,11 +142,21 @@ class LogicalField(Base):
 
 class FieldMapping(Base):
     __tablename__ = "field_mappings"
-    __table_args__ = (UniqueConstraint("data_source_id", "logical_field_id"),)
+    __table_args__ = (UniqueConstraint("data_source_id", "line_code"),)
 
     id = Column(Integer, primary_key=True)
     data_source_id = Column(ForeignKey("data_sources.id"))
-    logical_field_id = Column(ForeignKey("logical_fields.id"))
+    logical_field_id = Column(ForeignKey("logical_fields.id"), nullable=True)
+    # 报表行（与取数/公式合并）
+    line_type = Column(String(10), default="fetch")  # fetch | formula
+    label = Column(String(100), nullable=True)
+    line_code = Column(String(50), nullable=True)
+    report_group = Column(String(100), nullable=True)
+    sort_order = Column(Integer, default=0)
+    expression = Column(Text, nullable=True)
+    format_type = Column(String(20), default="usd")
+    is_highlight = Column(Boolean, default=False)
+    owner_id = Column(Integer, nullable=True)
     description = Column(Text, nullable=True)
     # 兼容旧版单列映射（迁移后可为空）
     sheet_name = Column(String(100), nullable=True)
@@ -244,7 +256,8 @@ class ReportRun(Base):
     __tablename__ = "report_runs"
 
     id = Column(Integer, primary_key=True)
-    template_id = Column(ForeignKey("report_templates.id"))
+    template_id = Column(ForeignKey("report_templates.id"), nullable=True)
+    data_source_id = Column(ForeignKey("data_sources.id"), nullable=True)
     report_date = Column(String(10))
     store_name = Column(String(100))
     is_test = Column(Boolean, default=True)
@@ -265,5 +278,6 @@ class ReportValue(Base):
     raw_value = Column(Float, nullable=True)
     display_value = Column(String(50))
     sort_order = Column(Integer, default=0)
+    report_group = Column(String(100), nullable=True)
 
     report_run = relationship("ReportRun", back_populates="values")

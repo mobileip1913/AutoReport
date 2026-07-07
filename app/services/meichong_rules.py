@@ -302,3 +302,8 @@ def apply_meichong_rules(db: Session, reset: bool = True) -> None:
         for p in parts:
             db.add(FieldMappingPart(mapping_id=mapping.id, **p))
     db.commit()
+
+    from app.services.report_line_sync import sync_report_lines
+    from app.services.meichong_rules import TEMPLATE_GROUPS, TEMPLATE_LINES
+
+    sync_report_lines(db, ds.id, TEMPLATE_LINES, TEMPLATE_GROUPS, only_missing=True)

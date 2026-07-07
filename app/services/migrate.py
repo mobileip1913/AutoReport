@@ -12,6 +12,9 @@ def run_migrations():
     _ensure_mapping_columns()
     _ensure_part_columns()
     _ensure_data_source_columns()
+    _ensure_report_run_columns()
+    _ensure_field_mapping_report_columns()
+    _ensure_report_value_columns()
 
 
 def _add_column_if_missing(conn, table: str, column: str, ddl_type: str):
@@ -52,6 +55,43 @@ def _ensure_data_source_columns():
         return
     with engine.begin() as conn:
         _add_column_if_missing(conn, "data_sources", "config", "JSON")
+
+
+def _ensure_report_run_columns():
+    insp = inspect(engine)
+    if "report_runs" not in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        _add_column_if_missing(conn, "report_runs", "data_source_id", "INTEGER")
+        _add_column_if_missing(conn, "report_runs", "template_id", "INTEGER")
+
+
+def _ensure_field_mapping_report_columns():
+    insp = inspect(engine)
+    if "field_mappings" not in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        _add_column_if_missing(conn, "field_mappings", "line_type", "VARCHAR(10)")
+        _add_column_if_missing(conn, "field_mappings", "label", "VARCHAR(100)")
+        _add_column_if_missing(conn, "field_mappings", "line_code", "VARCHAR(50)")
+        _add_column_if_missing(conn, "field_mappings", "report_group", "VARCHAR(100)")
+        _add_column_if_missing(conn, "field_mappings", "sort_order", "INTEGER DEFAULT 0")
+        _add_column_if_missing(conn, "field_mappings", "expression", "TEXT")
+        _add_column_if_missing(conn, "field_mappings", "format_type", "VARCHAR(20)")
+        _add_column_if_missing(conn, "field_mappings", "is_highlight", "BOOLEAN DEFAULT 0")
+        _add_column_if_missing(conn, "field_mappings", "owner_id", "INTEGER")
+        # logical_field_id 可空（SQLite 需重建列时跳过，新库由 create_all 处理）
+        cols = {c["name"] for c in insp.get_columns("field_mappings")}
+        if "logical_field_id" in cols:
+            pass  # 已有列，nullable 仅对新 ORM 插入生效
+
+
+def _ensure_report_value_columns():
+    insp = inspect(engine)
+    if "report_values" not in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        _add_column_if_missing(conn, "report_values", "report_group", "VARCHAR(100)")
 
 
 def ensure_logical_fields(db: Session) -> None:
