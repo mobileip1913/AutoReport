@@ -37,6 +37,28 @@ final class SchemaService
         return $out;
     }
 
+    /**
+     * 数据源 catalog 关键字 → UI 短名，供规则摘要展示。
+     * @param array<int, array> $meta
+     * @return array<int, array<string, string>>
+     */
+    public static function fileLabelsFromMeta(array $meta): array
+    {
+        $out = [];
+        foreach ($meta as $dsId => $m) {
+            $labels = [];
+            foreach ($m['files'] ?? [] as $f) {
+                $kw = trim((string) ($f['keyword'] ?? ''));
+                if ($kw === '') {
+                    continue;
+                }
+                $labels[$kw] = trim((string) ($f['label'] ?? $f['file_label'] ?? $kw));
+            }
+            $out[(int) $dsId] = $labels;
+        }
+        return $out;
+    }
+
     /** 完整 Catalog 目录：文件 → Sheet → 列头。 */
     public static function buildFullSchemaSnapshot(array $ds): array
     {

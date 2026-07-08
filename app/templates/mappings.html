@@ -7,7 +7,6 @@
     {% if accessible_stores %}
     <form method="post" action="/demo/switch-store" class="flex flex-wrap items-center gap-2 min-w-0">
       <input type="hidden" name="next_url" value="/mappings">
-      <span class="text-xs font-medium text-slate-500 shrink-0">店铺</span>
       <select name="store_id" class="store-bind-select border rounded-lg px-3 py-2 text-sm min-w-[220px] max-w-full" onchange="this.form.submit()">
         {% for store in accessible_stores %}
         <option value="{{ store.id }}" {% if current_store and store.id == current_store.id %}selected{% endif %}>
@@ -17,13 +16,6 @@
       </select>
     </form>
     {% endif %}
-  </div>
-  <div class="flex flex-wrap items-center gap-2 shrink-0">
-    {% set export_ds_id = current_store.data_source_id if current_store else (data_sources[0].id if data_sources|length == 1 else none) %}
-    {% if export_ds_id %}
-    <button type="button" class="btn-export-config px-4 py-2 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700" data-ds-id="{{ export_ds_id }}">导出 JSON</button>
-    {% endif %}
-    <button type="button" id="btnNewMapping" class="btn-primary text-sm font-medium px-4 py-2 rounded-lg">日报字段</button>
   </div>
 </div>
 
@@ -41,14 +33,17 @@
     <div class="ds-settings-body px-4 py-3">
       <div class="ds-settings-main min-w-0">
         <div class="ds-settings-head flex flex-wrap items-start justify-between gap-3 mb-2">
-          <div>
-            <div class="section-inline-title">主表与筛选时间</div>
-            <p class="text-xs text-slate-500 mt-0.5">跨表关联与样品/刷单排除均以此为准</p>
+          <div class="ds-settings-head-title">
+            <span class="section-inline-title">主表与筛选时间</span>
+            <span class="text-xs text-slate-500">跨表关联与样品/刷单排除均以此为准</span>
           </div>
-          <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <div class="ds-settings-head-actions">
+            <span class="ds-timezone-label">Asia/Shanghai</span>
             <button type="button" class="btn-open-schedule px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap" data-ds-id="{{ ds.id }}">
               每日自动生成 · <span class="ds-schedule-label">{% if st and st.daily_generate_at %}{{ st.daily_generate_at }}{% else %}未设置{% endif %}</span>
             </button>
+            <button type="button" class="btn-export-config px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap" data-ds-id="{{ ds.id }}">导出 JSON</button>
+            <button type="button" class="btn-new-mapping btn-primary text-sm font-medium px-4 py-1.5 rounded-lg whitespace-nowrap">增加日报字段</button>
             <button type="button" class="btn-save-ds-settings px-4 py-1.5 btn-primary text-sm whitespace-nowrap">保存</button>
           </div>
         </div>
@@ -66,7 +61,6 @@
             <div class="ds-order-date-col-host"></div>
           </div>
         </div>
-        <p class="ds-tool-hint mt-2">Asia/Shanghai · 刷单 <span class="ds-review-count text-slate-600">{{ st.review_order_count if st else 0 }}</span> 行 · <span class="ds-review-order-count text-slate-600">{{ st.review_order_distinct if st else 0 }}</span> 单</p>
       </div>
     </div>
   </div>
@@ -88,7 +82,7 @@
           <th class="px-4 py-2 w-16">类型</th>
           <th class="px-4 py-2">指标名称</th>
           <th class="px-4 py-2">规则摘要</th>
-          <th class="px-4 py-2 w-24"></th>
+          <th class="px-4 py-2 w-36"></th>
         </tr>
       </thead>
       <tbody>
@@ -121,7 +115,7 @@
   {% set aux = (auxiliary or {}).get(ds.id, []) %}
   {% if aux %}
   <div id="aux-fields-{{ ds.id }}" class="section-table-card bg-white rounded-xl shadow border border-slate-200 overflow-hidden mb-4" data-ds-id="{{ ds.id }}">
-    <button type="button" class="section-table-header section-table-header--toggle aux-fields-toggle w-full text-left" aria-expanded="false" aria-controls="aux-body-{{ ds.id }}">
+    <button type="button" class="section-table-header section-table-header--toggle aux-fields-toggle w-full text-left" aria-expanded="true" aria-controls="aux-body-{{ ds.id }}">
       <div class="section-table-header-main">
         <span class="section-table-title">基础取数字段</span>
         <span class="section-table-count">{{ aux|length }}</span>
@@ -136,13 +130,13 @@
       </div>
       <button type="button" class="aux-first-use-dismiss" aria-label="知道了">知道了</button>
     </div>
-    <div id="aux-body-{{ ds.id }}" class="aux-fields-body is-collapsed overflow-x-auto">
+    <div id="aux-body-{{ ds.id }}" class="aux-fields-body overflow-x-auto">
       <table class="w-full text-sm min-w-[720px] app-table">
         <thead class="bg-slate-50 text-left text-slate-500 text-xs">
           <tr>
             <th class="px-4 py-2">字段名称</th>
             <th class="px-4 py-2">规则摘要</th>
-            <th class="px-4 py-2 w-20"></th>
+            <th class="px-4 py-2 w-36"></th>
           </tr>
         </thead>
         <tbody>
@@ -168,7 +162,7 @@
               {% endif %}
             </td>
             <td class="px-4 py-3">
-              <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
+              {% include "partials/report_rule_actions.html" %}
             </td>
           </tr>
           {% endfor %}
@@ -199,9 +193,9 @@
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
 <script src="/static/app_toast.js?v=20260708b"></script>
 <script src="/static/app_modal.js?v=20260708v"></script>
-<script src="/static/form_controls.js?v=20260708v"></script>
-<script src="/static/mappings_settings.js?v=20260708k"></script>
-<script src="/static/mapping_modal.js?v=20260708v"></script>
+<script src="/static/form_controls.js?v=20260709b"></script>
+<script src="/static/mappings_settings.js?v=20260709a"></script>
+<script src="/static/mapping_modal.js?v=20260709a"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const hash = location.hash;

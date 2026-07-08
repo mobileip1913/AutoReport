@@ -1497,8 +1497,10 @@ document.addEventListener('DOMContentLoaded', () => {
     e.stopImmediatePropagation();
     closeModal();
   }, true);
-  document.getElementById('btnNewMapping')?.addEventListener('click', () => {
-    openModal('create').catch(() => {});
+  document.querySelectorAll('.btn-new-mapping').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openModal('create').catch(() => {});
+    });
   });
   document.body.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-edit');

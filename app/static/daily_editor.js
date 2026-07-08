@@ -325,12 +325,8 @@
   refreshColLetters();
 
   const fieldsModal = document.getElementById('dailyFieldsModal');
-  const openFieldsModal = () => {
-    if (!fieldsModal) return;
-    window.AppModal?.open(fieldsModal, { focus: false });
-  };
-  if (fieldsModal) {
+  if (fieldsModal && !fieldsModal.dataset.bound) {
+    fieldsModal.dataset.bound = '1';
     window.AppModal?.bind(fieldsModal, { closeAttr: 'data-close-daily-fields' });
-    document.getElementById('btnOpenDailyFields')?.addEventListener('click', openFieldsModal);
   }
 })();

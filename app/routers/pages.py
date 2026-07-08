@@ -407,6 +407,17 @@ def daily_generate(
 
     store_name = (ds.config or {}).get("meta", {}).get("店铺名称") or ds.name
     run = generate_report_for_data_source(db, ds.id, report_date, store_name, is_test=True)
+    accept = (request.headers.get("accept") or "").lower()
+    # fetch 提交时 Accept 含 application/json，返回可下载信息；普通表单仍走重定向
+    wants_json = "application/json" in accept or request.query_params.get("format") == "json"
+    if wants_json:
+        return {
+            "ok": True,
+            "run_id": run.id,
+            "report_date": run.report_date,
+            "export_url": f"/daily/{run.id}/export",
+            "redirect_url": f"/daily?run_id={run.id}",
+        }
     return RedirectResponse(url=f"/daily?run_id={run.id}", status_code=303)
 
 

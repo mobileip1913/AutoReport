@@ -33,16 +33,36 @@ final class MeichongRules
 
     /** 尚无对应 Excel / Catalog 文件的占位指标（报表行保留，出报=0） */
     public const PENDING_FILE_CODES = [
-        'mc_review_amount',
-        'mc_review_commission',
-        'mc_review_service_fee',
-        'mc_review_logistics',
-        'mc_review_cost',
-        'mc_sample_cost',
+        'mc_ad_spend',
         'mc_logistics_fee',
         'mc_product_cost',
         'mc_fixed_cost',
         'mc_frame_return',
+    ];
+
+    /** 刷单 Excel 导入字段（不含物流运费） */
+    public const REVIEW_EXCEL_IMPORT_CODES = [
+        'mc_review_amount',
+        'mc_review_commission',
+        'mc_review_service_fee',
+        'mc_review_cost',
+    ];
+
+    public const REVIEW_LOGISTICS_CODES = ['mc_review_logistics'];
+
+    /** 刷单相关导入字段（含物流） */
+    public const REVIEW_IMPORT_CODES = [
+        'mc_review_amount',
+        'mc_review_commission',
+        'mc_review_service_fee',
+        'mc_review_cost',
+        'mc_review_logistics',
+    ];
+
+    /** 样品单 Excel 导入 */
+    public const SAMPLE_IMPORT_CODES = [
+        'mc_sample_logistics',
+        'mc_sample_cost',
     ];
 
     public static function meichongConfig(): array

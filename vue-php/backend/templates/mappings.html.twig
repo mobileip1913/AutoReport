@@ -1,0 +1,256 @@
+{% extends "base.html.twig" %}
+{% block title %}报表配置 - AutoReport{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <div>
+    <h1 class="text-2xl font-bold">报表配置</h1>
+    <p class="text-slate-600 mt-1 text-sm">每套报表配置绑定一个<strong>店铺</strong>；切换账号可查看不同权限下的配置。</p>
+  </div>
+  <div class="flex gap-2">
+    {% if data_sources|length == 1 %}
+    <button type="button" class="btn-export-config px-4 py-2 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700" data-ds-id="{{ data_sources[0].id }}">导出 JSON</button>
+    {% endif %}
+    <button type="button" id="btnNewMapping" class="px-4 py-2 btn-primary">+ 取数行</button>
+  </div>
+</div>
+
+{% if accessible_stores %}
+<div class="mb-6 bg-white rounded-xl border border-slate-200 px-4 py-3 flex flex-wrap items-center gap-3">
+  <div class="text-xs font-medium text-slate-500 shrink-0">配置店铺</div>
+  <form method="post" action="/demo/switch-store" class="flex flex-wrap items-center gap-2 min-w-0">
+    <input type="hidden" name="next_url" value="/mappings">
+    <select name="store_id" class="store-bind-select border rounded-lg px-3 py-2 text-sm min-w-[220px] max-w-full" onchange="this.form.submit()">
+      {% for store in accessible_stores %}
+      <option value="{{ store.id }}" {% if current_store and store.id == current_store.id %}selected{% endif %}>
+        {{ store.name }} · {{ store.platform }}
+      </option>
+      {% endfor %}
+    </select>
+    <span class="text-xs text-slate-400">报表行、取数规则、导出模板均按所选店铺隔离</span>
+  </form>
+</div>
+{% endif %}
+
+<div id="toast" class="fixed bottom-6 right-6 hidden z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white"></div>
+
+{% for ds in data_sources %}
+{% set bound_store = store_by_ds_id[ds.id] ?? null %}
+{% set review_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_logistics', 'mc_review_cost'] %}
+<section class="mb-8">
+  <div class="flex items-center gap-2 mb-3">
+    <h2 class="text-lg font-semibold">{{ bound_store ? bound_store.name : ds.name }}</h2>
+    <span class="text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-500">{{ bound_store ? bound_store.platform : ds.platform }}</span>
+    {% if bound_store %}
+    <span class="text-xs px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-100">已绑定店铺</span>
+    {% endif %}
+  </div>
+
+  {% set st = ds_settings[ds.id] ?? {} %}
+  <div class="ds-settings-card bg-white rounded-xl shadow border border-slate-200 mb-4" data-ds-id="{{ ds.id }}">
+    <div class="ds-settings-layout px-4 py-3 gap-3">
+      <div class="ds-settings-main min-w-0">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-2">
+          <span class="text-sm text-slate-600">数据基准表选择；跨表关联 / 样品·刷单排除均以此为准</span>
+        </div>
+        <div class="ds-baseline-grid">
+          <div class="ds-field">
+            <label class="ds-field-label">来源文件</label>
+            <select class="ds-order-file w-full border rounded-lg px-2 py-1.5 text-sm"></select>
+          </div>
+          <div class="ds-field">
+            <label class="ds-field-label">Sheet</label>
+            <select class="ds-order-sheet w-full border rounded-lg px-2 py-1.5 text-sm"></select>
+          </div>
+          <div class="ds-field">
+            <label class="ds-field-label">日期列</label>
+            <select class="ds-order-date-col w-full border rounded-lg px-2 py-1.5 text-sm"></select>
+          </div>
+        </div>
+        <div class="mt-2 ds-current-summary">
+          当前基线：<span class="ds-date-summary text-slate-700 font-medium">{{ st ? st.date_master_summary : '加载中…' }}</span>
+        </div>
+      </div>
+
+      <aside class="ds-settings-side">
+        <div class="mb-2">
+          <label class="ds-field-label block mb-1">绑定店铺</label>
+          <div class="text-sm font-medium text-slate-800 truncate" title="{{ bound_store ? bound_store.name : ds.name }}">
+            {{ bound_store ? bound_store.name : ds.name }}
+          </div>
+        </div>
+        <div class="mb-2">
+          <label class="ds-field-label block mb-1">导出 Excel 模板</label>
+          <select class="ds-excel-template w-full border rounded-lg px-2 py-1.5 text-sm">
+            {% for tpl in excel_templates %}
+            <option value="{{ tpl }}" {% if st and st.excel_template_file == tpl %}selected{% elseif not st.excel_template_file and tpl == '日报模板.xlsx' %}selected{% endif %}>{{ tpl }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-[10px] text-slate-400 mt-1">日报导出时按此模板版式填充</p>
+        </div>
+        <label class="ds-field-label block mb-1">每日自动生成</label>
+        <div class="ds-time-picker" data-value="{{ st ? st.daily_generate_at : '' }}">
+          <button type="button" class="ds-time-trigger" aria-haspopup="dialog" aria-expanded="false">
+            <span class="ds-time-value">未设置</span>
+            <span class="ds-time-icon" aria-hidden="true">⌄</span>
+          </button>
+          <div class="ds-time-popover hidden" role="dialog" aria-label="选择每日自动生成时间">
+            <div class="ds-time-popover-head">
+              <span>选择时间</span>
+              <button type="button" class="ds-time-clear" title="清除时间" aria-label="清除时间">&times;</button>
+            </div>
+            <div class="ds-time-section">
+              <div class="ds-time-section-title">小时</div>
+              <div class="ds-time-grid ds-time-hour-grid"></div>
+            </div>
+            <div class="ds-time-section">
+              <div class="ds-time-section-title">分钟</div>
+              <div class="ds-time-grid ds-time-min-grid"></div>
+            </div>
+          </div>
+        </div>
+        <input type="hidden" class="ds-daily-time" value="{{ st ? st.daily_generate_at : '' }}">
+        <p class="text-[10px] text-slate-400 mt-1.5">昨日日报 · Asia/Shanghai · 刷单 <span class="ds-review-count text-slate-600">{{ st ? st.review_order_count : 0 }}</span> 行 · <span class="ds-review-order-count text-slate-600">{{ st ? st.review_order_distinct : 0 }}</span> 单</p>
+        <button type="button" class="btn-save-ds-settings mt-2 w-full px-3 py-1.5 btn-primary text-sm whitespace-nowrap">保存</button>
+        <button type="button" class="btn-export-config mt-2 w-full px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap" data-ds-id="{{ ds.id }}">导出 JSON</button>
+      </aside>
+    </div>
+  </div>
+
+  {% set excel_rows = excel_config[ds.id] ?? [] %}
+  {% if excel_rows %}
+  <div class="bg-white rounded-xl shadow border border-slate-100 overflow-x-auto mb-4">
+    <div class="px-4 py-2 brand-header px-4 py-2 text-sm font-semibold flex items-center justify-between gap-2">
+      <span>日报字段 <span class="font-normal text-link/80 text-xs">— 与日报输出页顺序同步（在日报页拖动排序）</span></span>
+    </div>
+    <table class="w-full text-sm min-w-[900px]">
+      <thead class="bg-slate-50 text-left text-slate-500 text-xs sticky top-0">
+        <tr>
+          <th class="px-4 py-2 w-14">Excel</th>
+          <th class="px-4 py-2 w-16">类型</th>
+          <th class="px-4 py-2">指标名称</th>
+          <th class="px-4 py-2">规则摘要</th>
+          <th class="px-4 py-2 w-16">格式</th>
+          <th class="px-4 py-2 w-24"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in excel_rows %}
+        {% set m = row.mapping %}
+        <tr id="report-field-{{ m.id }}" class="border-t border-slate-100 hover:bg-slate-50 transition-colors">
+          <td class="px-4 py-3 font-mono text-xs text-slate-500">{{ row.col }}</td>
+          <td class="px-4 py-3">
+            {% if row.is_manual %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">手工</span>
+            {% else %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">取数</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <div class="font-medium">{{ row.label }}</div>
+            <div class="text-[10px] font-mono text-slate-400">{field:{{ row.line_code }}}</div>
+          </td>
+          <td class="px-4 py-3 text-xs text-slate-600 font-mono">
+            {% set ds_id = ds.id %}{% set ds_settings_entry = st %}
+            {% include "partials/report_rule_summary.html.twig" %}
+          </td>
+          <td class="px-4 py-3 text-xs text-slate-500">{{ m.format_type ?: 'usd' }}</td>
+          <td class="px-4 py-3">
+            {% set ds_id = ds.id %}
+            {% include "partials/report_rule_actions.html.twig" %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% set aux = auxiliary[ds.id] ?? [] %}
+  {% if aux %}
+  <div id="aux-fields-{{ ds.id }}" class="bg-white rounded-xl shadow border border-teal-100 overflow-x-auto mb-4">
+    <div class="aux-header px-4 py-2 text-sm font-semibold">
+      基础取数字段
+      <span class="font-normal aux-text opacity-80 text-xs ml-1">— 供上方组合指标引用，单独维护取数规则，不出现在日报</span>
+    </div>
+    <table class="w-full text-sm min-w-[800px]">
+      <thead class="bg-slate-50 text-left text-slate-500 text-xs">
+        <tr>
+          <th class="px-4 py-2">字段名称</th>
+          <th class="px-4 py-2">规则摘要</th>
+          <th class="px-4 py-2 w-20"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in aux %}
+        {% set m = item.mapping %}
+        <tr id="aux-field-{{ m.id }}" class="border-t border-slate-100 hover:bg-teal-50/30 transition-shadow">
+          <td class="px-4 py-3">
+            <div class="font-medium">{{ item.label }}</div>
+            <div class="text-[10px] font-mono text-slate-400">{field:{{ item.line_code }}}</div>
+          </td>
+          <td class="px-4 py-3 text-xs text-slate-600 font-mono">
+            {% if m.parts %}
+              {% for p in m.parts|sort((a, b) => a.sort_order <=> b.sort_order) %}
+              <div class="mb-0.5">
+                {% if p.ref_field_code %}
+                <span class="aux-text">{% if not loop.first and p.combine_op == 'subtract' %}− {% elseif not loop.first %}＋ {% endif %}[复用 {field:{{ p.ref_field_code }}}]</span>
+                {% elseif p.sources and p.sources|length > 1 %}
+                  {% for s in p.sources %}<span>{% if loop.index > 1 %}+ {% endif %}{% if s.source_file_keyword %}[{{ s.source_file_keyword }}]{% endif %}{{ s.sheet_name }}.{{ s.column_header }}</span>{% endfor %}
+                {% else %}
+                {% if p.source_file_keyword %}<span class="text-amber-600">[{{ p.source_file_keyword }}]</span>{% endif %}{{ p.sheet_name }}.{{ p.column_header }}
+                {% endif %}
+                {% if not p.ref_field_code %}<span class="text-sky-600">({{ p.aggregation }})</span>{% endif %}
+                {% for hint in p|part_rule_hints %}
+                <span class="text-indigo-600/90 text-[10px] ml-1">· {{ hint }}</span>
+                {% endfor %}
+              </div>
+              {% endfor %}
+            {% elseif item.line_code in pending_file_codes %}
+            <span class="text-amber-600">待接入专用文件（Catalog 中尚无对应表，出报=0）</span>
+            {% else %}
+            <span class="text-slate-400">未配置取数</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elseif not excel_rows %}
+  <div class="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-sm">暂无配置，请添加取数行</div>
+  {% endif %}
+</section>
+
+{% endfor %}
+
+<!-- 取数弹窗 -->
+{% set modal_data_sources = data_sources %}
+{% set modal_fields = fields %}
+{% include "partials/mapping_modal.html.twig" %}
+
+{% include "partials/review_settings_modal.html.twig" %}
+
+<script>window.CURRENT_STORE_DS_ID = {{ current_store ? current_store.data_source_id : (data_sources ? data_sources[0].id : null) }};</script>
+<script>window.DATA_SOURCE_META = {{ meta_json|raw }};</script>
+<script>window.DS_SETTINGS = {{ ds_settings_json|raw }};</script>
+<script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json|raw }};</script>
+<script>window.MAPPING_MODAL_CONTEXT = 'mappings';</script>
+<script src="/static/mappings_settings.js?v=20260707u"></script>
+<script src="/static/mapping_modal.js?v=20260707u"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const hash = location.hash;
+  if (!hash.startsWith('#report-field-') && !hash.startsWith('#aux-field-')) return;
+  const el = document.querySelector(hash);
+  if (!el) return;
+  setTimeout(() => {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('ring-2', 'ring-sky-400', 'ring-offset-2');
+    setTimeout(() => el.classList.remove('ring-2', 'ring-sky-400', 'ring-offset-2'), 2400);
+  }, 120);
+});
+</script>
+{% endblock %}

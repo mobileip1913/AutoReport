@@ -67,6 +67,8 @@ $app->get('/reports/{run_id:[0-9]+}', [$pages, 'reportDetail']);
 $app->get('/daily', [$pages, 'daily']);
 $app->post('/daily/generate', [$pages, 'dailyGenerate']);
 $app->get('/daily/review-template', [$pages, 'dailyReviewTemplate']);
+$app->get('/daily/review-logistics-template', [$pages, 'dailyReviewLogisticsTemplate']);
+$app->get('/daily/sample-template', [$pages, 'dailySampleTemplate']);
 $app->get('/daily/{run_id:[0-9]+}/export-sku', [$pages, 'dailyExportSku']);
 $app->get('/daily/{run_id:[0-9]+}/export', [$pages, 'dailyExport']);
 $app->get('/imports', [$pages, 'importsRedirect']);
@@ -93,5 +95,9 @@ $app->put('/api/data-sources/{data_source_id:[0-9]+}/settings', [$api, 'updateDa
 $app->get('/api/data-sources/{data_source_id:[0-9]+}/config/export', [$api, 'exportDataSourceConfig']);
 $app->get('/api/data-sources/{data_source_id:[0-9]+}/review-orders/template', [$api, 'downloadReviewTemplate']);
 $app->post('/api/data-sources/{data_source_id:[0-9]+}/review-orders/import', [$api, 'importReviewOrders']);
+$app->get('/api/data-sources/{data_source_id:[0-9]+}/review-logistics/template', [$api, 'downloadReviewLogisticsTemplate']);
+$app->post('/api/data-sources/{data_source_id:[0-9]+}/review-logistics/import', [$api, 'importReviewLogistics']);
+$app->get('/api/data-sources/{data_source_id:[0-9]+}/sample-orders/template', [$api, 'downloadSampleTemplate']);
+$app->post('/api/data-sources/{data_source_id:[0-9]+}/sample-orders/import', [$api, 'importSampleOrders']);
 
 $app->run();

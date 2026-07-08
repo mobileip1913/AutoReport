@@ -53,11 +53,14 @@ composer install
 # 2. 初始化（建表 + 种子数据，幂等可重复执行）
 php bin/init.php
 
-# 3. 启动开发服务器（端口避开 Python 版的 8000）
-php -S 0.0.0.0:8090 -t public
+# 3. 启动开发服务器（推荐独立进程，不挂 Cursor 终端里，避免会话结束被杀）
+powershell -File bin\serve.ps1
+# 或手动：php -S 0.0.0.0:8090 -t public
 ```
 
 访问 http://127.0.0.1:8090 。
+
+> **注意**：在 Cursor Agent 后台用 `php -S` 启动时，相关 Shell 会话结束会把 PHP **一并终止**。日常请用 `bin\serve.ps1`（`Start-Process` 脱离终端）或在本机独立 PowerShell 窗口里跑。
 
 ### 定时出报
 

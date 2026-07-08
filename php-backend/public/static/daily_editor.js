@@ -26,16 +26,7 @@
   }
 
   function toast(msg, ok = true) {
-    const toastEl = document.getElementById('dailyToast');
-    if (!toastEl) return;
-    toastEl.textContent = msg;
-    toastEl.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all duration-300 ${ok ? 'bg-emerald-600' : 'bg-red-600'}`;
-    toastEl.classList.remove('hidden', 'opacity-0', 'translate-y-2');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => {
-      toastEl.classList.add('opacity-0', 'translate-y-2');
-      setTimeout(() => toastEl.classList.add('hidden'), 280);
-    }, 2200);
+    window.showAppToast?.(msg, ok);
   }
 
   function setStatus(text, tone = 'muted') {
@@ -58,8 +49,11 @@
 
   function refreshColLetters() {
     tbody.querySelectorAll('.daily-row').forEach((row, i) => {
+      const letter = colLetter(i);
       const el = row.querySelector('.col-letter');
-      if (el) el.textContent = colLetter(i);
+      if (el) el.textContent = letter;
+      const previewCol = row.querySelector('.daily-field-line__col');
+      if (previewCol) previewCol.textContent = letter;
     });
   }
 
@@ -76,19 +70,68 @@
     if (!res.ok) throw new Error(data.detail || '排序保存失败');
     refreshColLetters();
     toast('顺序已保存');
+    updateOrderButtons();
+  }
+
+  function updateOrderButtons() {
+    const rows = [...tbody.querySelectorAll('.daily-row')];
+    rows.forEach((row, i) => {
+      const up = row.querySelector('.daily-order-btn--up');
+      const down = row.querySelector('.daily-order-btn--down');
+      if (up) up.disabled = i === 0;
+      if (down) down.disabled = i === rows.length - 1;
+    });
+  }
+
+  function moveRow(row, direction) {
+    const sibling = direction === 'up' ? row.previousElementSibling : row.nextElementSibling;
+    if (!sibling?.classList.contains('daily-row')) return;
+    if (direction === 'up') {
+      tbody.insertBefore(row, sibling);
+    } else {
+      tbody.insertBefore(sibling, row);
+    }
+    refreshColLetters();
+    updateOrderButtons();
+    saveOrder().catch((err) => toast(err.message, false));
+  }
+
+  function initOrderButtons() {
+    tbody.querySelectorAll('.daily-order-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (btn.disabled) return;
+        const row = btn.closest('.daily-row');
+        if (!row) return;
+        moveRow(row, btn.classList.contains('daily-order-btn--up') ? 'up' : 'down');
+      });
+    });
+    updateOrderButtons();
   }
 
   function initDragDrop() {
     tbody.querySelectorAll('.daily-row').forEach((row) => {
-      row.addEventListener('dragstart', (e) => {
+      const handle = row.querySelector('.drag-handle');
+      if (!handle) return;
+
+      handle.addEventListener('dragstart', (e) => {
+        e.stopPropagation();
         dragSrc = row;
-        row.classList.add('opacity-50', 'daily-row--dragging');
+        row.classList.add('daily-row--dragging');
         e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', row.dataset.mappingId || '');
       });
-      row.addEventListener('dragend', () => {
-        row.classList.remove('opacity-50', 'daily-row--dragging');
+
+      handle.addEventListener('dragend', () => {
+        row.classList.remove('daily-row--dragging');
         dragSrc = null;
       });
+
+      handle.addEventListener('click', (e) => {
+        e.preventDefault();
+      });
+
       row.addEventListener('dragover', (e) => {
         e.preventDefault();
         if (!dragSrc || dragSrc === row) return;
@@ -96,6 +139,7 @@
         const after = e.clientY > rect.top + rect.height / 2;
         tbody.insertBefore(dragSrc, after ? row.nextSibling : row);
       });
+
       row.addEventListener('drop', (e) => {
         e.preventDefault();
         if (!dragSrc) return;
@@ -104,7 +148,7 @@
     });
   }
 
-  async function saveLabel(row, label) {
+  async function saveLabel(row, label, editor) {
     const mappingId = row.dataset.mappingId;
     const res = await fetch(`/api/mappings/${mappingId}/label`, {
       method: 'PATCH',
@@ -113,58 +157,83 @@
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || '改名失败');
-    row.querySelector('.field-label').value = data.label;
+    const input = editor?.querySelector('.field-label');
+    const displayBtn = editor?.querySelector('.field-label-display');
+    if (input) {
+      input.value = data.label;
+      input.dataset.lastLabel = data.label;
+    }
+    if (displayBtn) displayBtn.textContent = data.label;
+    closeLabelEditor(editor);
     toast('名称已保存');
   }
 
-  document.getElementById('btnAddField')?.addEventListener('click', async () => {
-    const dsId = requireDsId();
-    if (!dsId) return;
-    const name = prompt('新字段名称', '新指标');
-    if (!name?.trim()) return;
-    setStatus('添加中…', 'busy');
-    try {
-      const res = await fetch(`/api/data-sources/${dsId}/report-fields`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          label: name.trim(),
-          run_id: runId ? parseInt(runId, 10) : null,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || '添加失败');
-      toast('字段已添加，请配置取数规则');
-      sessionStorage.setItem('openMappingId', String(data.id));
-      location.reload();
-    } catch (err) {
-      toast(err.message, false);
-    } finally {
-      setStatus('已同步', 'ok');
-    }
-  });
+  let activeLabelEditor = null;
 
-  tbody.querySelectorAll('.field-label').forEach((input) => {
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') input.blur();
-    });
-    input.addEventListener('blur', () => {
-      const row = input.closest('.daily-row');
-      const prev = input.dataset.lastLabel || input.defaultValue;
-      const val = input.value.trim();
-      if (!val) {
-        input.value = prev;
-        return;
-      }
-      if (val === prev) return;
-      saveLabel(row, val).catch((err) => {
-        input.value = prev;
-        toast(err.message, false);
+  function closeLabelEditor(editor) {
+    if (!editor) return;
+    const displayBtn = editor.querySelector('.field-label-display');
+    const input = editor.querySelector('.field-label');
+    if (displayBtn && input) {
+      displayBtn.textContent = input.value;
+      displayBtn.classList.remove('hidden');
+      input.classList.add('hidden');
+    }
+    editor.closest('.daily-row')?.classList.remove('daily-row--editing-label');
+    if (activeLabelEditor === editor) activeLabelEditor = null;
+  }
+
+  function initLabelEditors() {
+    tbody.querySelectorAll('.field-label-editor').forEach((editor) => {
+      const displayBtn = editor.querySelector('.field-label-display');
+      const input = editor.querySelector('.field-label');
+      if (!displayBtn || !input) return;
+
+      input.dataset.lastLabel = input.value;
+      displayBtn.textContent = input.value;
+
+      displayBtn.addEventListener('click', () => {
+        if (activeLabelEditor && activeLabelEditor !== editor) closeLabelEditor(activeLabelEditor);
+        displayBtn.classList.add('hidden');
+        input.classList.remove('hidden');
+        input.focus();
+        input.select();
+        activeLabelEditor = editor;
+        editor.closest('.daily-row')?.classList.add('daily-row--editing-label');
       });
-      input.dataset.lastLabel = val;
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') input.blur();
+        if (e.key === 'Escape') {
+          input.value = input.dataset.lastLabel || '';
+          closeLabelEditor(editor);
+        }
+      });
+
+      input.addEventListener('blur', () => {
+        if (activeLabelEditor !== editor) return;
+        const row = editor.closest('.daily-row');
+        const prev = input.dataset.lastLabel || '';
+        const val = input.value.trim();
+        if (!val) {
+          input.value = prev;
+          closeLabelEditor(editor);
+          return;
+        }
+        if (val === prev) {
+          closeLabelEditor(editor);
+          return;
+        }
+        saveLabel(row, val, editor).catch((err) => {
+          input.value = prev;
+          closeLabelEditor(editor);
+          toast(err.message, false);
+        });
+      });
     });
-    input.dataset.lastLabel = input.value;
-  });
+  }
+
+  initLabelEditors();
 
   function parseNumber(raw) {
     const s = String(raw ?? '').trim().replace(/[$,¥,\s]/g, '');
@@ -175,16 +244,25 @@
 
   function updateRowUI(row, data) {
     const displayBtn = row.querySelector('.value-display');
-    const statusTag = row.querySelector('.status-tag');
+    const statusTag = row.querySelector('.row-status-tag');
     const isManual = row.dataset.manual === '1';
-    if (displayBtn) {
-      displayBtn.textContent = data.display_value || (isManual ? '点击填写' : '—');
+    if (displayBtn && !isManual) {
+      displayBtn.textContent = data.display_value || '—';
+      displayBtn.classList.toggle('text-amber-900', !!data.is_overridden);
+      displayBtn.classList.toggle('text-slate-800', !!data.display_value && !data.is_overridden);
+      displayBtn.classList.toggle('text-slate-300', !data.display_value && !data.is_overridden);
     }
     row.classList.toggle('daily-row--overridden', !!data.is_overridden);
-    if (statusTag && isManual) {
-      statusTag.textContent = data.display_value ? '已填写' : '待填写';
-    } else if (statusTag && data.is_overridden) {
-      statusTag.textContent = '已调整';
+    if (statusTag && !isManual) {
+      if (data.is_overridden) {
+        statusTag.textContent = '已调整';
+        statusTag.className = 'field-type-tag field-type-tag--warn row-status-tag';
+      } else if (row.dataset.configured === '0') {
+        statusTag.textContent = '未配规则';
+        statusTag.className = 'field-type-tag field-type-tag--muted row-status-tag';
+      } else {
+        statusTag.remove();
+      }
     }
   }
 
@@ -205,6 +283,7 @@
 
   if (runId) {
     tbody.querySelectorAll('.daily-row').forEach((row) => {
+      if (row.dataset.manual === '1') return;
       const displayBtn = row.querySelector('.value-display');
       const input = row.querySelector('.value-input');
       if (!displayBtn || !input) return;
@@ -237,8 +316,17 @@
       row.querySelector('.computed-cell')?.addEventListener('dblclick', () => {
         saveValue(row, { clear_override: true }).catch((e) => toast(e.message, false));
       });
+      row.querySelector('.computed-cell')?.setAttribute('title', '双击恢复为系统计算值');
     });
   }
 
   initDragDrop();
+  initOrderButtons();
+  refreshColLetters();
+
+  const fieldsModal = document.getElementById('dailyFieldsModal');
+  if (fieldsModal && !fieldsModal.dataset.bound) {
+    fieldsModal.dataset.bound = '1';
+    window.AppModal?.bind(fieldsModal, { closeAttr: 'data-close-daily-fields' });
+  }
 })();

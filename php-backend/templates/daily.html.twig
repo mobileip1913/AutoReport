@@ -1,234 +1,520 @@
 {% extends "base.html.twig" %}
-
 {% block title %}日报输出 - AutoReport{% endblock %}
-
 {% block content %}
+{% set review_excel_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_cost'] %}
+{% set review_logistics_codes = ['mc_review_logistics'] %}
+{% set review_import_codes = review_excel_import_codes + review_logistics_codes %}
 
-<div class="mb-6">
-  <h1 class="text-2xl font-bold">日报输出</h1>
-  <p class="text-sm text-slate-500 mt-1">在此管理报表字段（增删改序、配置取数），与
-    <a href="/mappings" class="text-link hover:underline">报表配置</a> 同步；生成日报后可填写/调整数值。</p>
-</div>
+<div id="dailyToast" class="app-toast hidden" role="status" aria-live="polite"></div>
 
-<div class="bg-white rounded-xl shadow border border-slate-100 p-5 mb-6">
-  <form method="post" action="/daily/generate" class="flex flex-wrap items-end gap-4">
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">店铺（报表配置）</label>
-      <select name="data_source_id" class="border rounded-lg px-3 py-2 text-sm min-w-[260px]">
-        {% for ds in daily_sources %}
-        <option value="{{ ds.id }}" {% if active_ds_id == ds.id %}selected{% endif %}>{{ ds.name }}</option>
+{% if active_ds_id %}
+<section class="daily-hub" aria-labelledby="daily-hub-title">
+  <div class="daily-hub__ambient" aria-hidden="true">
+    <span class="daily-hub__orb daily-hub__orb--a"></span>
+    <span class="daily-hub__orb daily-hub__orb--b"></span>
+    <span class="daily-hub__orb daily-hub__orb--c"></span>
+  </div>
+
+  <header class="daily-hub__hero">
+    <h1 id="daily-hub-title" class="daily-hub__title">日报输出</h1>
+    {% if accessible_stores %}
+    <form method="post" action="/demo/switch-store" class="daily-hub__store-form">
+      <input type="hidden" name="next_url" value="/daily">
+      <label class="daily-hub__store-label" for="dailyStoreSelect">当前店铺</label>
+      <select id="dailyStoreSelect" name="store_id" class="daily-hub__store-select store-bind-select" onchange="this.form.submit()">
+        {% for store in accessible_stores %}
+        <option value="{{ store.id }}" {% if current_store and store.id == current_store.id %}selected{% endif %}>
+          {{ store.name }} · {{ store.platform }}
+        </option>
         {% endfor %}
       </select>
-    </div>
-    <div>
-      <label class="block text-xs text-slate-500 mb-1">报表日期</label>
-      <input type="date" name="report_date" value="{{ run ? run.report_date : '2026-06-22' }}"
-             class="border rounded-lg px-3 py-2 text-sm">
-    </div>
-    <button type="submit" class="btn-primary text-sm font-medium">
-      生成日报
-    </button>
-    <div class="flex flex-wrap items-end gap-2 border-l border-slate-200 pl-4 ml-1">
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">刷单数据</label>
-        <div class="flex gap-2">
-          <a id="btnReviewTemplate" href="#" class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">下载模板</a>
-          <label class="px-3 py-2 text-sm border border-sky-200 text-sky-700 rounded-lg hover:bg-sky-50 cursor-pointer">
-            导入刷单
-            <input type="file" id="reviewImportInput" accept=".xlsx" class="hidden">
-          </label>
-        </div>
-      </div>
-      <p id="reviewImportHint" class="text-xs text-slate-400 self-center hidden"></p>
-    </div>
-
-    {% if not daily_sources %}
-    <span class="text-sm text-red-500">暂无已配置日报的数据源</span>
+    </form>
     {% endif %}
-  </form>
-</div>
-
-<div id="dailyToast" class="fixed bottom-6 right-6 hidden z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all duration-300 translate-y-2 opacity-0"></div>
-
-{% if excel_rows is not null %}
-{% set review_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_logistics', 'mc_review_cost'] %}
-<div id="dailyEditor" class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden"
-     data-run-id="{{ run ? run.id : '' }}"
-     data-ds-id="{{ active_ds_id ?: (run ? run.data_source_id : '') ?: (daily_sources ? daily_sources[0].id : '') }}">
-  <div class="flex flex-wrap items-center justify-between gap-3 px-6 py-4 bg-slate-50 border-b border-slate-100">
-    <div class="flex flex-wrap items-center gap-3">
-      {% if meta %}
-      <span class="text-sm text-slate-600">店铺: <strong>{{ meta['店铺名称'] }}</strong></span>
-      <span class="text-sm text-slate-600">日期: <strong>{{ run.report_date }}</strong></span>
-      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs">#{{ run.id }}</span>
-      {% else %}
-      <span class="text-sm text-slate-500">字段结构预览 · 生成日报后可填写数值</span>
-      {% endif %}
+    {% if run %}
+    <div
+      class="daily-hub__status"
+      id="dailyRunStatus"
+      data-run-date="{{ run.report_date }}"
+      {% if (run.report_date or '') != (default_report_date or '') %}hidden{% endif %}
+    >
+      <span class="daily-status-pill">
+        <span class="daily-status-pill__dot" aria-hidden="true"></span>
+        <span class="tabular-nums">已生成 {{ run.report_date }} · #{{ run.id }}</span>
+      </span>
+      <span id="saveStatus" class="daily-hub__sync">已同步</span>
     </div>
-    <div class="flex items-center gap-2">
-      <button type="button" id="btnAddField" class="btn-secondary">+ 添加字段</button>
-      {% if run %}
-      <span id="saveStatus" class="text-xs text-slate-400">已同步</span>
-      <a href="/daily/{{ run.id }}/export" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">导出 Excel</a>
-      <a href="/daily/{{ run.id }}/export-sku" class="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">导出 SKU 明细</a>
-      {% endif %}
-    </div>
-  </div>
+    {% endif %}
+  </header>
 
-  <div class="overflow-x-auto">
-    <table class="w-full text-sm min-w-[980px] daily-excel-table">
-      <thead class="bg-slate-50 text-left text-slate-500 text-xs border-b border-slate-100">
-        <tr>
-          <th class="px-2 py-3 w-10"></th>
-          <th class="px-4 py-3 w-14 font-medium">列</th>
-          <th class="px-4 py-3 font-medium">指标名称</th>
-          {% if run %}<th class="px-4 py-3 w-32 font-medium">系统计算</th>{% endif %}
-          {% if run %}<th class="px-4 py-3 w-40 font-medium">报表值</th>{% endif %}
-          {% if run %}<th class="px-4 py-3 w-24 font-medium">状态</th>{% endif %}
-          <th class="px-4 py-3 w-28 font-medium">取数</th>
-        </tr>
-      </thead>
-      <tbody id="dailyFieldBody">
-        {% for row in excel_rows %}
-        {% set m = row.mapping %}
-        <tr class="daily-row border-t border-slate-100 transition-colors duration-200
-          {% if run and row.is_manual %}daily-row--manual{% elseif run and row.is_overridden %}daily-row--overridden{% endif %}
-          {% if not row.configured and not row.is_manual %}daily-row--unconfigured{% endif %}"
-          draggable="true"
-          data-mapping-id="{{ row.mapping_id }}"
-          data-value-id="{{ row.value_id ?: '' }}"
-          data-format="{{ row.format_type }}"
-          data-manual="{{ row.is_manual ? '1' : '0' }}"
-          data-computed="{{ row.computed_raw ?? '' }}">
-          <td class="px-2 py-3 text-slate-300 cursor-grab active:cursor-grabbing drag-handle" title="拖动排序">⋮⋮</td>
-          <td class="px-4 py-3 font-mono text-xs text-slate-500 col-letter">{{ row.col }}</td>
-          <td class="px-4 py-3">
-            <input type="text" class="field-label w-full max-w-[14rem] font-medium text-slate-800 border border-transparent hover:border-slate-200 focus:border-sky-300 rounded-lg px-2 py-1 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-200" value="{{ row.label }}">
-            <div class="text-[10px] font-mono text-slate-400 mt-0.5">{field:{{ row.line_code }}}</div>
-          </td>
-          <td class="px-4 py-3 text-xs text-slate-600 font-mono max-w-[280px]">
-            {% set ds_id = active_ds_id %}{% set ds_settings_entry = (ds_settings[active_ds_id] ?? {}) %}
-            {% include "partials/report_rule_summary.html.twig" %}
-          </td>
-          {% if run %}
-          <td class="px-4 py-3 font-mono text-sm text-slate-500 computed-cell">
-            {% if row.computed_display %}{{ row.computed_display }}{% elseif row.is_manual %}<span class="text-slate-300">—</span>{% else %}<span class="text-slate-300">—</span>{% endif %}
-          </td>
-          <td class="px-4 py-3">
-            {% if row.editable %}
-            <div class="value-editor relative">
-              <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 {% if row.is_manual %}text-amber-800 bg-amber-50/80 border-amber-200{% elseif row.is_overridden %}text-amber-900{% elseif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
-                {{ row.display_value ?: '点击填写' }}
-              </button>
-              <input type="text" inputmode="decimal" class="value-input hidden w-full font-mono text-sm px-2 py-1.5 rounded-lg border border-sky-300 focus:ring-2 focus:ring-sky-400 focus:outline-none" value="{{ row.raw_value ?? '' }}" placeholder="输入数值">
-            </div>
-            {% else %}<span class="text-slate-300">—</span>{% endif %}
-          </td>
-          <td class="px-4 py-3">
-            {% if row.is_manual %}
-              {% if row.display_value %}
-              <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">已填写</span>
-              {% else %}
-              <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">待填写</span>
-              {% endif %}
-            {% elseif row.is_overridden %}
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">已调整</span>
-            {% elseif not row.configured %}
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">未配规则</span>
-            {% else %}
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">自动</span>
+  <form method="post" action="/daily/generate" class="daily-workflow">
+    <input type="hidden" name="data_source_id" id="dailyDsId" value="{{ active_ds_id }}">
+
+    <div class="daily-workflow__track">
+      <article class="daily-flow-step daily-flow-step--date daily-flow-step--enter-1">
+        <div class="daily-flow-step__head">
+          <span class="daily-flow-step__badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 9.75h18M4.5 6.75h15a1.5 1.5 0 011.5 1.5v12a1.5 1.5 0 01-1.5 1.5h-15a1.5 1.5 0 01-1.5-1.5v-12a1.5 1.5 0 011.5-1.5z"/>
+            </svg>
+          </span>
+          <span class="daily-flow-step__index" aria-hidden="true">01</span>
+        </div>
+        <h2 class="daily-flow-step__title">选择日期</h2>
+        <p class="daily-flow-step__desc">指定要汇总的报表日期，后续导入与导出均以此为准。</p>
+        <div class="daily-flow-step__body">
+          <div id="reportDatePicker" data-value="{{ run ? run.report_date : default_report_date }}"></div>
+        </div>
+      </article>
+
+      <div class="daily-workflow__bridge" aria-hidden="true">
+        <span class="daily-workflow__bridge-line"></span>
+        <span class="daily-workflow__bridge-dot"></span>
+        <span class="daily-workflow__bridge-line"></span>
+      </div>
+
+      <article class="daily-flow-step daily-flow-step--import daily-flow-step--enter-2">
+        <div class="daily-flow-step__head">
+          <span class="daily-flow-step__badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 10.5L12 15m0 0l4.5-4.5M12 15V3"/>
+            </svg>
+          </span>
+          <span class="daily-flow-step__index" aria-hidden="true">02</span>
+        </div>
+        <h2 class="daily-flow-step__title">辅助数据</h2>
+        <p class="daily-flow-step__desc">下载模板后导入刷单、运费或样品单，再重新生成日报。</p>
+        <div class="daily-flow-step__body">
+          <div class="daily-import-grid">
+            <button type="button" id="btnImportTemplate" class="daily-import-tile daily-import-tile--template">
+              <span class="daily-import-tile__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/>
+                </svg>
+              </span>
+              <span class="daily-import-tile__label">下载模板</span>
+            </button>
+            <label class="daily-import-tile">
+              <span class="daily-import-tile__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m6.75 12H9.75m3 0h3.75m-3.75 0v-3.375m0 3.375h3.75m-9.75 0H5.625c-.621 0-1.125-.504-1.125-1.125V5.25c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125v3.75m0 9.75h3.75"/>
+                </svg>
+              </span>
+              <span class="daily-import-tile__label">导入刷单</span>
+              <input type="file" id="reviewImportInput" accept=".xlsx" class="hidden">
+            </label>
+            <label class="daily-import-tile">
+              <span class="daily-import-tile__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9m9 9H18.375a1.125 1.125 0 011.125 1.125v3.375c0 .621-.504 1.125-1.125 1.125H14.25"/>
+                </svg>
+              </span>
+              <span class="daily-import-tile__label">导入运费</span>
+              <input type="file" id="reviewLogisticsImportInput" accept=".xlsx" class="hidden">
+            </label>
+            <label class="daily-import-tile">
+              <span class="daily-import-tile__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 11.25v8.25a1.5 1.5 0 01-1.5 1.5H4.5a1.5 1.5 0 01-1.5-1.5v-8.25M12 4.875A2.625 2.625 0 109.375 7.5H12m0-2.625V7.5m0-2.625A2.625 2.625 0 1114.625 7.5H12m0 0V21m-8.625-9.75h18c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125h-18c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z"/>
+                </svg>
+              </span>
+              <span class="daily-import-tile__label">导入样品单</span>
+              <input type="file" id="sampleImportInput" accept=".xlsx" class="hidden">
+            </label>
+          </div>
+          <p id="reviewImportHint" class="daily-import-hint hidden"></p>
+          <p id="sampleImportHint" class="daily-import-hint hidden"></p>
+        </div>
+      </article>
+
+      <div class="daily-workflow__bridge" aria-hidden="true">
+        <span class="daily-workflow__bridge-line"></span>
+        <span class="daily-workflow__bridge-dot"></span>
+        <span class="daily-workflow__bridge-line"></span>
+      </div>
+
+      <article class="daily-flow-step daily-flow-step--actions daily-flow-step--enter-3">
+        <div class="daily-flow-step__head">
+          <span class="daily-flow-step__badge" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-2.25v3.75"/>
+            </svg>
+          </span>
+          <span class="daily-flow-step__index" aria-hidden="true">03</span>
+        </div>
+        <h2 class="daily-flow-step__title">生成与导出</h2>
+        <p class="daily-flow-step__desc">生成完成后将自动下载 Excel，也可提前设置字段或导出 SKU 销量。</p>
+        <div class="daily-flow-step__body daily-flow-step__body--actions">
+          <button type="submit" id="btnGenerateDaily" class="daily-generate-btn btn-primary">
+            <span class="daily-generate-btn__idle">
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88A.75.75 0 008 11.25v1.5a.75.75 0 00.75.75h4.5a.75.75 0 00.53-.22l3-3a.75.75 0 00-1.06-1.06l-2.47 2.47-2.776-3.62zm-7.857 4.809a.75.75 0 01.75-.75h.008a.75.75 0 01.75.75v.008a.75.75 0 01-.75.75h-.008a.75.75 0 01-.75-.75v-.008z" clip-rule="evenodd"/>
+              </svg>
+              生成日报
+            </span>
+            <span class="daily-generate-btn__busy" hidden>
+              <span class="daily-generate-spinner" aria-hidden="true"></span>
+              生成中…
+            </span>
+          </button>
+          <div class="daily-action-row">
+            {% if excel_rows is not none %}
+            <button type="button" id="btnOpenDailyFields" class="daily-action-chip">
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.84 1.804A1 1 0 018.82 1h2.36a1 1 0 01.98.804l.331 1.652a6.993 6.993 0 011.929 1.115l1.598-.54a1 1 0 011.186.447l1.18 2.044a1 1 0 01-.205 1.251l-1.267 1.113a7.047 7.047 0 010 2.228l1.267 1.113a1 1 0 01.206 1.25l-1.18 2.045a1 1 0 01-1.187.447l-1.598-.54a6.993 6.993 0 01-1.929 1.115l-.33 1.652a1 1 0 01-.98.804H8.82a1 1 0 01-.98-.804l-.331-1.652a6.957 6.957 0 01-1.929-1.115l-1.598.54a1 1 0 01-1.186-.447l-1.18-2.044a1 1 0 01.205-1.251l1.267-1.114a7.05 7.05 0 010-2.227L1.821 7.773a1 1 0 01-.205-1.25l1.18-2.045a1 1 0 011.187-.447l1.598.54A6.993 6.993 0 017.51 3.456l.33-1.652zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+              设置日报字段
+            </button>
             {% endif %}
-          </td>
-          {% endif %}
-          <td class="px-4 py-3">
-            {% set ds_id = active_ds_id %}
-            {% include "partials/report_rule_actions.html.twig" %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+            <button type="button" id="btnExportSkuSales" class="daily-action-chip">
+              <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/></svg>
+              导出 SKU 销量
+            </button>
+          </div>
+        </div>
+      </article>
+    </div>
+  </form>
 
-  <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
-    <span>⋮⋮ 拖动调整列顺序</span>
-    <span>点击指标名称可修改</span>
-    {% if run %}<span>点击报表值可编辑；改规则后请重新生成日报</span>{% endif %}
+  {% if not run %}
+  <p class="daily-hub__footnote">选择日期后点击「生成日报」，完成后将自动下载 Excel。</p>
+  {% endif %}
+</section>
+
+<div id="dailyBusyOverlay" class="daily-generate-overlay" hidden aria-live="polite" aria-busy="false">
+  <div class="daily-generate-overlay__card">
+    <div class="daily-generate-overlay__rings" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </div>
+    <p class="daily-generate-overlay__title" id="dailyBusyOverlayTitle">正在处理</p>
+    <p class="daily-generate-overlay__desc" id="dailyBusyOverlayDesc">请稍候…</p>
   </div>
 </div>
+
+{% if excel_rows is not none %}
+{% include "partials/daily_fields_modal.html.twig" %}
 {% elseif daily_sources %}
-<p class="text-sm text-slate-500">当前店铺暂无报表字段，请点上方「+ 添加字段」或前往报表配置。</p>
+<div class="daily-empty-card">
+  <p class="daily-empty-card__text">当前店铺暂无日报字段，请前往 <a href="/mappings" class="text-link hover:underline">报表配置</a> 添加。</p>
+</div>
+{% endif %}
+
+{% elseif not daily_sources %}
+<p class="text-sm text-red-500">暂无已配置日报的店铺</p>
 {% endif %}
 
 {% if active_ds_id %}
-{% set modal_data_sources = modal_data_sources ?: daily_sources %}
-{% set modal_fields = modal_fields ?: [] %}
+{% set modal_data_sources = modal_data_sources or daily_sources %}
+{% set modal_fields = modal_fields or [] %}
 {% include "partials/mapping_modal.html.twig" %}
 {% include "partials/review_settings_modal.html.twig" %}
+{% include "partials/review_template_download_modal.html.twig" %}
 {% endif %}
-
 {% endblock %}
 
 {% block scripts %}
 {% if active_ds_id %}
-<script>window.CURRENT_STORE_DS_ID = {{ active_ds_id }};</script>
-<script>window.DATA_SOURCE_META = {{ meta_json|raw }};</script>
-<script>window.DS_SETTINGS = {{ ds_settings_json|raw }};</script>
-<script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json|raw }};</script>
-<script>window.MAPPING_MODAL_CONTEXT = 'daily';</script>
-<script src="/static/mappings_settings.js?v=20260707u"></script>
-<script src="/static/mapping_modal.js?v=20260707u"></script>
+<script>window.CURRENT_STORE_DS_ID = {{ active_ds_id  }};</script>
+<script>window.DATA_SOURCE_META = {{ meta_json |raw }};</script>
+<script>window.DS_SETTINGS = {{ ds_settings_json |raw }};</script>
+<script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json |raw }};</script>
+<script src="/static/app_toast.js?v=20260708b"></script>
+<script src="/static/app_modal.js?v=20260708v"></script>
+<script src="/static/form_controls.js?v=20260709b"></script>
+<script src="/static/mappings_settings.js?v=20260709a"></script>
+<script src="/static/mapping_modal.js?v=20260708v"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  const dsSelect = document.querySelector('select[name="data_source_id"]');
-  const tpl = document.getElementById('btnReviewTemplate');
-  const input = document.getElementById('reviewImportInput');
-  const hint = document.getElementById('reviewImportHint');
-  const resolveDsId = () => parseInt(dsSelect?.value || '{{ active_ds_id ?: "" }}', 10);
-
-  const updateTpl = () => {
-    const id = resolveDsId();
-    if (tpl && id) tpl.href = `/daily/review-template?data_source_id=${id}`;
+  const dateRoot = document.getElementById('reportDatePicker');
+  const runStatus = document.getElementById('dailyRunStatus');
+  const syncRunStatus = (iso) => {
+    if (!runStatus) return;
+    const runDate = runStatus.dataset.runDate || '';
+    runStatus.classList.toggle('hidden', !iso || iso !== runDate);
   };
-  updateTpl();
-  dsSelect?.addEventListener('change', updateTpl);
+  if (dateRoot && window.DateField) {
+    const field = new DateField(dateRoot, {
+      name: 'report_date',
+      value: dateRoot.dataset.value || '',
+      size: 'md',
+      onChange: syncRunStatus,
+    });
+    syncRunStatus(field.val());
+  }
 
-  input?.addEventListener('change', async () => {
-    const file = input.files?.[0];
+  const form = document.querySelector('form.daily-workflow');
+  const genBtn = document.getElementById('btnGenerateDaily');
+  const skuBtn = document.getElementById('btnExportSkuSales');
+  const overlay = document.getElementById('dailyBusyOverlay');
+  const overlayTitle = document.getElementById('dailyBusyOverlayTitle');
+  const overlayDesc = document.getElementById('dailyBusyOverlayDesc');
+  const resolveDsId = () => parseInt(document.getElementById('dailyDsId')?.value || '{{ active_ds_id or "" }}', 10);
+  let pageBusy = false;
+
+  const setBusyOverlay = (on, { title, desc } = {}) => {
+    pageBusy = on;
+    if (overlayTitle && title) overlayTitle.textContent = title;
+    if (overlayDesc && desc) overlayDesc.textContent = desc;
+    if (overlay) {
+      overlay.hidden = !on;
+      overlay.setAttribute('aria-busy', on ? 'true' : 'false');
+      overlay.classList.toggle('is-visible', on);
+    }
+  };
+
+  const setGenerateBusy = (on, desc) => {
+    setBusyOverlay(on, {
+      title: on ? '正在生成日报' : undefined,
+      desc: desc || (on ? '请稍候…' : undefined),
+    });
+    if (genBtn) {
+      genBtn.disabled = on;
+      genBtn.classList.toggle('is-busy', on);
+      const idle = genBtn.querySelector('.daily-generate-btn__idle');
+      const busy = genBtn.querySelector('.daily-generate-btn__busy');
+      if (idle) idle.hidden = on;
+      if (busy) busy.hidden = !on;
+    }
+    if (!on) pageBusy = false;
+  };
+
+  const parseDownloadFilename = (contentDisposition, fallback) => {
+    if (!contentDisposition) return fallback;
+    const star = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition);
+    if (star) {
+      try { return decodeURIComponent(star[1].trim()); } catch (_) { return star[1].trim(); }
+    }
+    const plain = /filename="?([^";]+)"?/i.exec(contentDisposition);
+    return plain ? plain[1].trim() : fallback;
+  };
+
+  const triggerDownload = (url) => {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const triggerBlobDownload = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (pageBusy) return;
+    const dsId = resolveDsId();
+    const reportDate = document.querySelector('input[name="report_date"]')?.value?.trim();
+    if (!dsId) {
+      window.showAppToast?.('请先选择店铺', false);
+      return;
+    }
+    if (!reportDate) {
+      window.showAppToast?.('请先选择报表日期', false);
+      return;
+    }
+
+    setGenerateBusy(true, '汇总字段与计算中…');
+    const fd = new FormData(form);
+    try {
+      const res = await fetch('/daily/generate', {
+        method: 'POST',
+        body: fd,
+        headers: { Accept: 'application/json' },
+        redirect: 'manual',
+      });
+      let data = null;
+      // 兼容未正确返回 JSON 的旧服务：跟随 303 Location 解析 run_id
+      if (res.status >= 300 && res.status < 400) {
+        const loc = (res.headers['Location') || '';
+        const m = loc.match(/[?&]run_id=(\d+)/);
+        if (m) {
+          const runId = parseInt(m[1]] ?? 10);
+          data = {
+            ok: true,
+            run_id: runId,
+            export_url: `/daily/${runId}/export`,
+            redirect_url: loc.startsWith('/') ? loc : `/daily?run_id=${runId}`,
+          };
+        }
+      } else {
+        try {
+          data = await res.json();
+        } catch (_) {
+          data = null;
+        }
+        if (!res.ok) {
+          const msg = typeof data?.detail === 'string' ? data.detail : '生成失败，请重试';
+          throw new Error(msg);
+        }
+      }
+      if (!data?.run_id || !data?.export_url) {
+        throw new Error('生成结果异常，请重试');
+      }
+      setGenerateBusy(true, '正在下载 Excel…');
+      triggerDownload(data.export_url);
+      window.showAppToast?.('日报已生成，正在下载 Excel', true);
+      window.setTimeout(() => {
+        setGenerateBusy(false);
+        window.location.href = data.redirect_url || `/daily?run_id=${data.run_id}`;
+      }, 450);
+    } catch (err) {
+      setGenerateBusy(false);
+      window.showAppToast?.(err.message || '生成失败', false);
+    }
+  });
+
+  const input = document.getElementById('reviewImportInput');
+  const logisticsInput = document.getElementById('reviewLogisticsImportInput');
+  const sampleInput = document.getElementById('sampleImportInput');
+  const hint = document.getElementById('reviewImportHint');
+  const sampleHint = document.getElementById('sampleImportHint');
+
+  document.getElementById('btnExportSkuSales')?.addEventListener('click', async () => {
+    if (pageBusy) return;
+    const dsId = resolveDsId();
+    const reportDate = document.querySelector('input[name="report_date"]')?.value?.trim();
+    if (!dsId) {
+      window.showAppToast?.('请先选择店铺', false);
+      return;
+    }
+    if (!reportDate) {
+      window.showAppToast?.('请先选择报表日期', false);
+      return;
+    }
+    const url = `/daily/export-sku?data_source_id=${encodeURIComponent(dsId)}&report_date=${encodeURIComponent(reportDate)}`;
+    setBusyOverlay(true, { title: '正在导出 SKU 销量', desc: '汇总销量明细中…' });
+    if (skuBtn) skuBtn.disabled = true;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        let msg = '导出失败，请重试';
+        try {
+          const data = await res.json();
+          if (typeof data.detail === 'string') msg = data.detail;
+        } catch (_) { /* binary or empty */ }
+        throw new Error(msg);
+      }
+      setBusyOverlay(true, { title: '正在导出 SKU 销量', desc: '正在下载 Excel…' });
+      const blob = await res.blob();
+      const filename = parseDownloadFilename(
+        (res.headers['Content-Disposition')] ?? `sku_sales_${reportDate}.xlsx`,
+      );
+      triggerBlobDownload(blob, filename);
+      window.showAppToast?.('SKU 销量已导出', true);
+    } catch (err) {
+      window.showAppToast?.(err.message || '导出失败', false);
+    } finally {
+      if (skuBtn) skuBtn.disabled = false;
+      setBusyOverlay(false);
+    }
+  });
+
+  const showImportHint = (el, text, ok = true) => {
+    el?.classList.remove('hidden', 'daily-import-hint--error', 'daily-import-hint--ok', 'daily-import-hint--loading');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add(ok ? 'daily-import-hint--ok' : 'daily-import-hint--error');
+  };
+
+  const runImport = async (file, endpoint, { loadingText, buildSuccess, hintEl = hint }) => {
     if (!file) return;
     const id = resolveDsId();
     if (!id) return;
     const fd = new FormData();
     fd.append('file', file);
-    hint?.classList.remove('hidden');
-    if (hint) hint.textContent = '导入中…';
+    showImportHint(hintEl, loadingText, true);
+    hintEl?.classList.remove('daily-import-hint--ok');
+    hintEl?.classList.add('daily-import-hint--loading');
     try {
-      const res = await fetch(`/api/data-sources/${id}/review-orders/import`, { method: 'POST', body: fd });
+      const res = await fetch(`/api/data-sources/${id}/${endpoint}`, { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) {
         const msg = typeof data.detail === 'string' ? data.detail : (data.detail?.errors?.join('；') || '导入失败');
-        if (hint) { hint.textContent = msg; hint.classList.add('text-red-500'); }
+        showImportHint(hintEl, msg, false);
         return;
       }
-      if (hint) {
+      showImportHint(hintEl, `${buildSuccess(data)}，请重新生成日报`, true);
+    } catch (e) {
+      showImportHint(hintEl, e.message || '导入失败', false);
+    }
+  };
+
+  input?.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    await runImport(file, 'review-orders/import', {
+      loadingText: '刷单导入中…',
+      buildSuccess: (data) => {
         const orders = data.review_order_distinct ?? data.imported;
         const logistics = data.review_logistics_total;
         let msg = `已导入 ${data.imported} 行 · ${orders} 个刷单订单`;
-        if (logistics != null) msg += ` · 物流费将计 $${Number(logistics).toFixed(2)}`;
-        hint.textContent = `${msg}，请重新生成日报`;
-        hint.classList.remove('text-red-500');
-        hint.classList.add('text-emerald-600');
-      }
-    } catch (e) {
-      if (hint) hint.textContent = e.message || '导入失败';
-    }
+        if (logistics != null) msg += ` · 物流费约 $${Number(logistics).toFixed(2)}`;
+        return msg;
+      },
+    });
     input.value = '';
   });
+
+  logisticsInput?.addEventListener('change', async () => {
+    const file = logisticsInput.files?.[0];
+    await runImport(file, 'review-logistics/import', {
+      loadingText: '运费导入中…',
+      buildSuccess: (data) => {
+        const total = data.review_logistics_total;
+        let msg = `已导入 ${data.imported} 行运费`;
+        if (total != null) msg += ` · 合计 $${Number(total).toFixed(2)}`;
+        return msg;
+      },
+    });
+    logisticsInput.value = '';
+  });
+
+  sampleInput?.addEventListener('change', async () => {
+    const file = sampleInput.files?.[0];
+    await runImport(file, 'sample-orders/import', {
+      loadingText: '样品单导入中…',
+      hintEl: sampleHint,
+      buildSuccess: (data) => {
+        const orders = data.sample_order_distinct ?? data.imported;
+        const logistics = data.sample_logistics_total;
+        const cost = data.sample_cost_total;
+        let msg = `已导入 ${data.imported} 行 · ${orders} 个样品订单`;
+        if (logistics != null) msg += ` · 运费 $${Number(logistics).toFixed(2)}`;
+        if (cost != null) msg += ` · 成本 $${Number(cost).toFixed(2)}`;
+        return msg;
+      },
+    });
+    sampleInput.value = '';
+  });
+
+  document.getElementById('btnImportTemplate')?.addEventListener('click', () => {
+    const id = resolveDsId();
+    if (id) window.openReviewTemplateDownloadModal?.(id);
+  });
+
+  const fieldsModal = document.getElementById('dailyFieldsModal');
+  const openDailyFieldsModal = () => {
+    if (!fieldsModal) return;
+    window.AppModal?.open(fieldsModal, { focus: false });
+  };
+  if (fieldsModal && window.AppModal) {
+    if (!fieldsModal.dataset.bound) {
+      fieldsModal.dataset.bound = '1';
+      window.AppModal.bind(fieldsModal, { closeAttr: 'data-close-daily-fields' });
+    }
+    document.getElementById('btnOpenDailyFields')?.addEventListener('click', openDailyFieldsModal);
+  }
 });
 </script>
 {% endif %}
-
-{% if excel_rows is not null %}
-<script src="/static/daily_editor.js?v=20260707o"></script>
+{% if excel_rows is not none %}
+<script src="/static/daily_editor.js?v=20260708j"></script>
 {% endif %}
 {% endblock %}

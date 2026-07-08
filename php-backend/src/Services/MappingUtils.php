@@ -37,6 +37,30 @@ final class MappingUtils
         return strtolower((string) ($m['line_type'] ?? '')) === 'manual';
     }
 
+    public static function isPerOrderLine(array $m): bool
+    {
+        return strtolower((string) ($m['line_type'] ?? '')) === 'per_order';
+    }
+
+    public static function isRatioLine(array $m): bool
+    {
+        return strtolower((string) ($m['line_type'] ?? '')) === 'ratio';
+    }
+
+    public static function isRefComputeLine(array $m): bool
+    {
+        $parts = $m['parts'] ?? [];
+        if (!$parts) {
+            return false;
+        }
+        foreach ($parts as $p) {
+            if (trim((string) ($p['ref_field_code'] ?? '')) === '') {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static function isFormulaLine(array $m): bool
     {
         if (self::isManualLine($m)) {
@@ -55,9 +79,157 @@ final class MappingUtils
         return $hasExpr && !$hasParts && !$hasLegacy;
     }
 
+    /** 日报字段展示分类：placeholder | review | sample | compute | fetch | per_order | ratio | formula */
+    public static function fieldDisplayType(array $m, ?string $lineCode = null): string
+    {
+        $code = $lineCode ?? self::mappingLineCode($m);
+        $label = self::mappingLabel($m);
+        if (self::isPerOrderLine($m)) {
+            return 'per_order';
+        }
+        if (self::isRatioLine($m)) {
+            return 'ratio';
+        }
+        if (self::isManualLine($m)) {
+            return 'placeholder';
+        }
+        if (!empty($m['parts'])) {
+            return self::isRefComputeLine($m) ? 'compute' : 'fetch';
+        }
+        if (in_array($label, MeichongRules::MANUAL_FILL_LABELS, true)) {
+            return 'placeholder';
+        }
+        if (in_array($code, MeichongRules::REVIEW_IMPORT_CODES, true)) {
+            return 'review';
+        }
+        if (in_array($code, MeichongRules::SAMPLE_IMPORT_CODES, true)) {
+            return 'sample';
+        }
+        if (in_array($code, MeichongRules::PENDING_FILE_CODES, true)) {
+            return 'placeholder';
+        }
+        if (self::isFormulaLine($m)) {
+            return 'formula';
+        }
+        return 'fetch';
+    }
+
     public static function isFetchLine(array $m): bool
     {
-        return !self::isFormulaLine($m) && !self::isManualLine($m);
+        return self::fieldDisplayType($m) === 'fetch';
+    }
+
+    /**
+     * 字段 code → 展示名（逻辑字段名 + 报表行 label）。
+     * @param array[] $mappings
+     * @param array[] $logicalFields
+     * @return array<string, string>
+     */
+    public static function buildFieldLabelsMap(array $mappings, array $logicalFields): array
+    {
+        $out = [];
+        foreach ($logicalFields as $lf) {
+            $code = (string) ($lf['code'] ?? '');
+            $name = (string) ($lf['name'] ?? '');
+            if ($code !== '' && $name !== '') {
+                $out[$code] = $name;
+            }
+        }
+        foreach ($mappings as $m) {
+            $code = self::mappingLineCode($m);
+            $label = self::mappingLabel($m);
+            if ($code !== '' && $label !== '') {
+                $out[$code] = $label;
+            }
+        }
+        return $out;
+    }
+
+    /** @return string[] */
+    public static function mappingSourceFileKeywords(array $m): array
+    {
+        $keywords = [];
+        $parts = $m['parts'] ?? [];
+        usort($parts, fn($a, $b) => ((int) ($a['sort_order'] ?? 0)) <=> ((int) ($b['sort_order'] ?? 0)));
+        foreach ($parts as $p) {
+            if (trim((string) ($p['ref_field_code'] ?? '')) !== '') {
+                continue;
+            }
+            $kw = trim((string) ($p['source_file_keyword'] ?? ''));
+            if ($kw !== '') {
+                $keywords[$kw] = true;
+            }
+            foreach ($p['sources'] ?? [] as $s) {
+                if (!is_array($s)) {
+                    continue;
+                }
+                $sk = trim((string) ($s['source_file_keyword'] ?? ''));
+                if ($sk !== '') {
+                    $keywords[$sk] = true;
+                }
+            }
+        }
+        $keys = array_keys($keywords);
+        sort($keys);
+        return $keys;
+    }
+
+    private const AGG_LABELS = [
+        'sum' => '求和',
+        'count' => '计数',
+        'count_distinct' => '去重计数',
+        'sum_dedup' => '去重求和',
+        'max_dedup' => '去重取最大',
+        'avg' => '平均值',
+    ];
+
+    private static function resolveFileLabel(?string $keyword, ?array $fileLabels): string
+    {
+        $kw = trim((string) $keyword);
+        if ($kw === '') {
+            return '';
+        }
+        $labels = $fileLabels ?? [];
+        return $labels[$kw] ?? $labels[strtolower($kw)] ?? $kw;
+    }
+
+    private static function sourceLoc(array $source, ?array $fileLabels): string
+    {
+        $fl = self::resolveFileLabel($source['source_file_keyword'] ?? null, $fileLabels);
+        $col = trim((string) ($source['column_header'] ?? ''));
+        if ($fl !== '' && $col !== '') {
+            return "{$fl}.{$col}";
+        }
+        return $col !== '' ? $col : ($fl !== '' ? $fl : '未指定');
+    }
+
+    /** 列表页规则摘要：订单.Order Amount · 去重求和 */
+    public static function partRuleBrief(array $part, ?array $fileLabels = null, ?array $fieldLabels = null): string
+    {
+        $ref = trim((string) ($part['ref_field_code'] ?? ''));
+        if ($ref !== '') {
+            $labels = $fieldLabels ?? [];
+            return $labels[$ref] ?? $ref;
+        }
+
+        $sources = $part['sources'] ?? [];
+        if ($sources) {
+            $pieces = [];
+            foreach ($sources as $i => $src) {
+                $loc = self::sourceLoc(is_array($src) ? $src : [], $fileLabels);
+                $pieces[] = $i ? "+ {$loc}" : $loc;
+            }
+            $srcText = implode(' ', $pieces);
+        } else {
+            $srcText = self::sourceLoc([
+                'source_file_keyword' => $part['source_file_keyword'] ?? null,
+                'column_header' => $part['column_header'] ?? null,
+            ], $fileLabels);
+        }
+
+        $agg = trim((string) ($part['aggregation'] ?? 'sum'));
+        $aggLabel = self::AGG_LABELS[$agg] ?? $agg;
+        return "{$srcText} · {$aggLabel}";
     }
 
     /** 纳入日报结构的行（非基础取数字段）。 */

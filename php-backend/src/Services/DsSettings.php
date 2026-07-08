@@ -84,6 +84,12 @@ final class DsSettings
         if (array_key_exists('review_orders', $patch)) {
             $cfg['review_orders'] = array_values($patch['review_orders'] ?? []);
         }
+        if (array_key_exists('sample_orders', $patch)) {
+            $cfg['sample_orders'] = array_values($patch['sample_orders'] ?? []);
+        }
+        if (array_key_exists('sample_order_ids', $patch)) {
+            $cfg['sample_order_ids'] = array_values($patch['sample_order_ids'] ?? []);
+        }
         Database::updateById('data_sources', (int) $ds['id'], ['config' => Database::jsonEncode($cfg)]);
         $ds['config'] = Database::jsonEncode($cfg);
         return $cfg;
@@ -96,6 +102,14 @@ final class DsSettings
             $store = Database::fetchOne('SELECT * FROM stores WHERE data_source_id = ?', [(int) $ds['id']]);
         }
         $reviews = $cfg['review_orders'] ?? [];
+        $samples = $cfg['sample_orders'] ?? [];
+        $sampleDistinct = [];
+        foreach ($samples as $r) {
+            $oid = trim((string) ($r['order_id'] ?? ''));
+            if ($oid !== '') {
+                $sampleDistinct[$oid] = true;
+            }
+        }
         return [
             'data_source_id' => (int) $ds['id'],
             'store_id' => $store ? (int) $store['id'] : null,
@@ -110,10 +124,12 @@ final class DsSettings
             'excel_template_file' => $cfg['excel_template_file'] ?? '',
             'review_order_count' => count($reviews ?: ($cfg['review_order_ids'] ?? [])),
             'review_order_distinct' => ReviewImport::distinctReviewOrderCount($reviews),
-            'review_logistics_mode' => ReviewImport::REVIEW_LOGISTICS_MODE_FIXED,
+            'review_logistics_mode' => ReviewImport::reviewLogisticsMode($cfg),
             'review_logistics_per_order' => ReviewImport::reviewLogisticsPerOrder($cfg),
             'review_logistics_exclude_same_day_refund' => ReviewImport::reviewLogisticsExcludeSameDayRefund($cfg),
             'review_logistics_rule_summary' => ReviewImport::reviewLogisticsRuleSummary($cfg),
+            'sample_order_count' => count($samples),
+            'sample_order_distinct' => count($sampleDistinct),
             'date_master_summary' => self::dateMasterSummary($cfg),
         ];
     }

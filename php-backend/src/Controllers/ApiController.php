@@ -14,6 +14,7 @@ use App\Services\MappingRepo;
 use App\Services\MappingUtils;
 use App\Services\ReportEngine;
 use App\Services\ReviewImport;
+use App\Services\SampleImport;
 use App\Services\SchemaService;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -695,6 +696,72 @@ final class ApiController
         }
         $content = (string) $file->getStream();
         $result = ReviewImport::importReviewOrders($ds, $content, true);
+        if (empty($result['ok'])) {
+            throw new HttpError(400, implode('; ', $result['errors'] ?? ['导入失败']));
+        }
+        return $this->json($response, $result);
+    }
+
+    public function downloadReviewLogisticsTemplate(Request $request, Response $response, array $args): Response
+    {
+        $dataSourceId = (int) $args['data_source_id'];
+        AccountContext::assertDataSourceAccess($this->cookies($request), $dataSourceId);
+        $content = ReviewImport::buildReviewLogisticsTemplateBytes();
+        $response->getBody()->write($content);
+        $filename = rawurlencode('刷单运费模板.xlsx');
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', "attachment; filename*=UTF-8''{$filename}");
+    }
+
+    public function importReviewLogistics(Request $request, Response $response, array $args): Response
+    {
+        $dataSourceId = (int) $args['data_source_id'];
+        AccountContext::assertDataSourceAccess($this->cookies($request), $dataSourceId);
+        $ds = Database::fetchOne('SELECT * FROM data_sources WHERE id = ?', [$dataSourceId]);
+        if (!$ds) {
+            throw new HttpError(404, '数据源不存在');
+        }
+        $files = $request->getUploadedFiles();
+        $file = $files['file'] ?? null;
+        if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+            throw new HttpError(400, '缺少上传文件');
+        }
+        $content = (string) $file->getStream();
+        $result = ReviewImport::importReviewLogistics($ds, $content, true);
+        if (empty($result['ok'])) {
+            throw new HttpError(400, implode('; ', $result['errors'] ?? ['导入失败']));
+        }
+        return $this->json($response, $result);
+    }
+
+    public function downloadSampleTemplate(Request $request, Response $response, array $args): Response
+    {
+        $dataSourceId = (int) $args['data_source_id'];
+        AccountContext::assertDataSourceAccess($this->cookies($request), $dataSourceId);
+        $content = SampleImport::buildSampleTemplateBytes();
+        $response->getBody()->write($content);
+        $filename = rawurlencode('样品单模板.xlsx');
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', "attachment; filename*=UTF-8''{$filename}");
+    }
+
+    public function importSampleOrders(Request $request, Response $response, array $args): Response
+    {
+        $dataSourceId = (int) $args['data_source_id'];
+        AccountContext::assertDataSourceAccess($this->cookies($request), $dataSourceId);
+        $ds = Database::fetchOne('SELECT * FROM data_sources WHERE id = ?', [$dataSourceId]);
+        if (!$ds) {
+            throw new HttpError(404, '数据源不存在');
+        }
+        $files = $request->getUploadedFiles();
+        $file = $files['file'] ?? null;
+        if (!$file || $file->getError() !== UPLOAD_ERR_OK) {
+            throw new HttpError(400, '缺少上传文件');
+        }
+        $content = (string) $file->getStream();
+        $result = SampleImport::importSampleOrders($ds, $content, true);
         if (empty($result['ok'])) {
             throw new HttpError(400, implode('; ', $result['errors'] ?? ['导入失败']));
         }

@@ -1,10 +1,6 @@
 {# 报表字段操作按钮（报表配置 / 日报输出共用） #}
-{% if row.is_manual %}
-<span class="text-slate-400 text-xs">—</span>
-{% elseif row.line_code in review_import_codes %}
-<button type="button" class="btn-review-settings text-link hover:underline text-xs" data-ds-id="{{ ds_id }}">刷单设置</button>
-{% elseif row.is_formula %}
-<button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
-{% else %}
-<button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
-{% endif %}
+{% set _del_label = (row is defined ? row.label : '') ?: (item is defined ? item.label : '') ?: m.excel_label ?: m.label ?: '' %}
+<div class="report-rule-actions">
+  <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
+  <button type="button" class="btn-delete-mapping btn-modal-danger btn-modal-danger--compact" data-id="{{ m.id }}" data-label="{{ _del_label }}">删除</button>
+</div>

@@ -1,0 +1,49 @@
+<!-- 刷单设置弹窗：Excel 导入金额/佣金/服务费/成本；仅物流费可设每单固定值 -->
+<div id="reviewSettingsModal" class="fixed inset-0 z-50 hidden opacity-0 transition-opacity duration-200 ease-out">
+  <div class="absolute inset-0 bg-black/40 backdrop-blur-[1px]" data-close-review-settings></div>
+  <div id="reviewSettingsPanel" class="absolute inset-x-4 top-[8vh] md:inset-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-[560px] md:max-h-[88vh] bg-white rounded-2xl shadow-2xl overflow-hidden transition-all duration-200 ease-out scale-95 origin-center flex flex-col">
+    <div class="px-5 py-4 border-b flex items-center justify-between bg-slate-50 shrink-0">
+      <div>
+        <h2 class="text-base font-bold text-slate-800">刷单设置</h2>
+        <p class="text-xs text-slate-500 mt-0.5">刷单金额、佣金、服务费、成本请导入 Excel；本弹窗仅物流费可设置每单固定金额</p>
+      </div>
+      <button type="button" data-close-review-settings class="text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+    </div>
+    <div class="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+      <section>
+        <h3 class="text-sm font-semibold text-slate-800">刷单数据 · Excel 导入</h3>
+        <p class="text-xs text-slate-500 mt-1">模板列：Order ID、SKU ID、刷单金额、刷单佣金、刷单服务费、刷单成本（不含物流费）。导入后立即生效并覆盖本店已有清单。</p>
+        <div class="flex flex-wrap items-center gap-2 mt-3">
+          <a href="#" class="review-template-link px-3 py-1.5 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">下载模板</a>
+          <label class="px-3 py-1.5 text-sm border border-sky-200 text-sky-700 rounded-lg hover:bg-sky-50 cursor-pointer">
+            导入刷单 Excel
+            <input type="file" class="review-import-input hidden" accept=".xlsx">
+          </label>
+        </div>
+        <p class="review-import-hint text-xs mt-2 hidden"></p>
+        <p class="text-xs text-slate-500 mt-2">当前 <span class="review-stat-rows font-medium text-slate-700">0</span> 行 · <span class="review-stat-orders font-medium text-slate-700">0</span> 个刷单订单</p>
+      </section>
+      <section class="border-t border-slate-100 pt-4">
+        <h3 class="text-sm font-semibold text-slate-800">刷单物流费用 · 每单固定</h3>
+        <p class="text-xs text-slate-500 mt-1">不重复刷单 Order ID 数 × 下方每单金额；与 Excel 中的金额列无关</p>
+        <div class="flex flex-wrap items-center gap-2 mt-3">
+          <label class="ds-field-label shrink-0">每单金额</label>
+          <div class="flex items-center gap-2">
+            <input type="number" class="review-logistics-per-order border rounded-lg px-2 py-1.5 text-sm w-24" min="0" step="0.01" value="1">
+            <span class="text-sm text-slate-500">元 / 单</span>
+          </div>
+        </div>
+        <label class="inline-flex items-center gap-1.5 text-sm text-slate-600 cursor-pointer mt-3"
+          title="当日下单且当日退款的刷单订单不计入物流费单数">
+          <input type="checkbox" class="review-logistics-exclude-same-day-refund rounded border-slate-300" checked>
+          排除当日退单
+        </label>
+        <p class="review-logistics-modal-summary text-xs text-violet-700/90 mt-2"></p>
+      </section>
+    </div>
+    <div class="px-5 py-3 border-t bg-slate-50 flex justify-end gap-2 shrink-0">
+      <button type="button" data-close-review-settings class="px-3 py-1.5 text-sm border border-slate-200 rounded-lg hover:bg-white text-slate-600">取消</button>
+      <button type="button" class="btn-save-review-settings px-3 py-1.5 text-sm btn-primary">保存物流费设置</button>
+    </div>
+  </div>
+</div>

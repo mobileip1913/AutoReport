@@ -165,6 +165,7 @@ final class DailyReport
             }
 
             $configured = !empty($m['parts']) || (!empty($m['sheet_name']) && !empty($m['column_header']));
+            $ftype = MappingUtils::fieldDisplayType($m, $code);
             $rows[] = [
                 'col' => self::columnForReportField($m, $mappings),
                 'sort_order' => (int) ($m['sort_order'] ?? 0),
@@ -172,9 +173,10 @@ final class DailyReport
                 'mapping' => $m,
                 'mapping_id' => (int) $m['id'],
                 'line_code' => $code,
+                'field_type' => $ftype,
                 'is_manual' => $isManual,
                 'is_formula' => MappingUtils::isFormulaLine($m),
-                'is_fetch' => !$isManual && !MappingUtils::isFormulaLine($m),
+                'is_fetch' => $ftype === 'fetch',
                 'configured' => $configured,
                 'pending_file' => isset($pending[$code]),
                 'format_type' => ($m['format_type'] ?? '') ?: 'usd',

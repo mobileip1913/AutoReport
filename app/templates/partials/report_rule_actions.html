@@ -1,2 +1,6 @@
-{# 报表字段操作按钮（报表配置 / 日报输出共用）：统一为「配置」，打开统一弹窗 #}
-<button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
+{# 报表字段操作按钮（报表配置 / 日报输出共用） #}
+{% set _del_label = (row.label if row is defined else '') or (item.label if item is defined else '') or m.excel_label or m.label or '' %}
+<div class="report-rule-actions">
+  <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
+  <button type="button" class="btn-delete-mapping btn-modal-danger btn-modal-danger--compact" data-id="{{ m.id }}" data-label="{{ _del_label }}">删除</button>
+</div>

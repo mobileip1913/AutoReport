@@ -599,7 +599,7 @@ function bindAuxFieldPanels() {
       toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     };
 
-    setExpanded(false);
+    setExpanded(true);
 
     toggle.addEventListener('click', () => {
       const open = body.classList.contains('is-collapsed');

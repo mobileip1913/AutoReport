@@ -29,6 +29,13 @@ final class Views
         ]);
         $twig->addFilter(new TwigFilter('cst', fn(?string $v, string $fmt = 'Y-m-d H:i') => Timezone::toCst($v, $fmt)));
         $twig->addFilter(new TwigFilter('part_rule_hints', fn(array $part) => MappingUtils::partRuleHints($part)));
+        $twig->addFilter(new TwigFilter('part_rule_brief', function (array $part, $fileLabels = [], $fieldLabels = []) {
+            return MappingUtils::partRuleBrief(
+                $part,
+                is_array($fileLabels) ? $fileLabels : [],
+                is_array($fieldLabels) ? $fieldLabels : []
+            );
+        }));
         self::$twig = $twig;
         return $twig;
     }

@@ -36,10 +36,23 @@ final class ReviewImport
         'cost' => 'mc_review_cost',
     ];
 
+    /** 运费单独导入列 */
+    public const REVIEW_LOGISTICS_IMPORT_COLUMNS = [
+        ['order_id', 'Order ID', true],
+        ['sku_id', 'SKU ID', true],
+        ['logistics', '刷单运费', false],
+    ];
+
     /** @return string[] */
     public static function templateHeaders(): array
     {
         return array_map(fn($c) => $c[1], self::REVIEW_COLUMNS);
+    }
+
+    /** @return string[] */
+    public static function logisticsTemplateHeaders(): array
+    {
+        return array_map(fn($c) => $c[1], self::REVIEW_LOGISTICS_IMPORT_COLUMNS);
     }
 
     public static function reviewLogisticsMode(array $cfg): string
@@ -81,12 +94,43 @@ final class ReviewImport
         return count($ids);
     }
 
+    /**
+     * @param array[] $reviews
+     * @param array<string, true>|null $excludeSameDayOrderIds
+     */
+    public static function reviewLogisticsTotal(
+        array $reviews,
+        array $cfg,
+        ?array $excludeSameDayOrderIds = null,
+    ): float {
+        $exclude = [];
+        if (self::reviewLogisticsExcludeSameDayRefund($cfg) && $excludeSameDayOrderIds) {
+            $exclude = $excludeSameDayOrderIds;
+        }
+        if (self::reviewLogisticsMode($cfg) === self::REVIEW_LOGISTICS_MODE_IMPORT) {
+            $total = 0.0;
+            foreach ($reviews as $row) {
+                $oid = trim((string) ($row['order_id'] ?? ''));
+                if ($oid !== '' && isset($exclude[$oid])) {
+                    continue;
+                }
+                $total += FieldAggregator::toNumber($row['logistics'] ?? null);
+            }
+            return $total;
+        }
+        return self::distinctReviewOrderCount($reviews, $exclude) * self::reviewLogisticsPerOrder($cfg);
+    }
+
     public static function reviewLogisticsRuleSummary(array $cfg): string
     {
         $reviews = $cfg['review_orders'] ?? [];
+        $suffix = self::reviewLogisticsExcludeSameDayRefund($cfg) ? ' · 排除当日退单' : '';
+        if (self::reviewLogisticsMode($cfg) === self::REVIEW_LOGISTICS_MODE_IMPORT) {
+            $total = self::reviewLogisticsTotal($reviews, $cfg);
+            return sprintf('Excel 导入运费合计 $%g%s · %d 行', $total, $suffix, count($reviews));
+        }
         $orderCount = self::distinctReviewOrderCount($reviews);
         $perOrder = self::reviewLogisticsPerOrder($cfg);
-        $suffix = self::reviewLogisticsExcludeSameDayRefund($cfg) ? ' · 排除当日退单' : '';
         return sprintf('按单固定 $%g/单 × %d 单刷单订单%s', $perOrder, $orderCount, $suffix);
     }
 
@@ -104,12 +148,12 @@ final class ReviewImport
         if (self::reviewLogisticsExcludeSameDayRefund($cfg) && $excludeSameDayOrderIds) {
             $exclude = $excludeSameDayOrderIds;
         }
-        $orderCount = self::distinctReviewOrderCount($reviews, $exclude);
+        $mode = self::reviewLogisticsMode($cfg);
         return [
             'row_count' => count($reviews),
-            'order_count' => $orderCount,
-            'logistics_total' => $orderCount * self::reviewLogisticsPerOrder($cfg),
-            'logistics_mode' => self::REVIEW_LOGISTICS_MODE_FIXED,
+            'order_count' => self::distinctReviewOrderCount($reviews, $exclude),
+            'logistics_total' => self::reviewLogisticsTotal($reviews, $cfg, $excludeSameDayOrderIds),
+            'logistics_mode' => $mode,
             'logistics_per_order' => self::reviewLogisticsPerOrder($cfg),
         ];
     }
@@ -121,6 +165,17 @@ final class ReviewImport
         foreach (self::REVIEW_COLUMNS as [$key, $header]) {
             $aliases[mb_strtolower($header)] = $key;
             $aliases[mb_strtolower(str_replace(' ', '', $header))] = $key;
+        }
+        foreach (self::REVIEW_LOGISTICS_IMPORT_COLUMNS as [$key, $header]) {
+            $aliases[mb_strtolower($header)] = $key;
+            $aliases[mb_strtolower(str_replace(' ', '', $header))] = $key;
+            if ($key === 'logistics') {
+                $aliases['运费'] = $key;
+                $aliases['物流费'] = $key;
+                $aliases['刷单运费'] = $key;
+                $aliases['刷单物流费'] = $key;
+                $aliases['刷单物流费用'] = $key;
+            }
         }
         $aliases['order id'] = 'order_id';
         $aliases['skuid'] = 'sku_id';
@@ -181,6 +236,210 @@ final class ReviewImport
             }
         }
         return $keys;
+    }
+
+    /** 供 SampleImport 等复用 */
+    public static function knownOrderSkuKeysPublic(array $ds): array
+    {
+        return self::knownOrderSkuKeys($ds);
+    }
+
+    public static function buildReviewLogisticsTemplateBytes(): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $ws = $spreadsheet->getActiveSheet();
+        $ws->setTitle('刷单运费');
+        $ws->fromArray(['说明：每行一条刷单 SKU 的运费；Order ID、SKU ID 必填；刷单运费填在对应列；导入后汇总至日报「刷单物流费用」，同 Order+SKU 覆盖'], null, 'A1');
+        $ws->fromArray(self::logisticsTemplateHeaders(), null, 'A2');
+        $ws->getStyle('A3:B3')->getNumberFormat()->setFormatCode('@');
+        $ws->setCellValueExplicit('A3', '1234567890123456789', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        $ws->setCellValueExplicit('B3', '9876543210', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+        $ws->fromArray([1.5], null, 'C3');
+
+        $tmp = tempnam(sys_get_temp_dir(), 'rlg');
+        (new Xlsx($spreadsheet))->save($tmp);
+        $spreadsheet->disconnectWorksheets();
+        $bytes = (string) file_get_contents($tmp);
+        @unlink($tmp);
+        return $bytes;
+    }
+
+    /** @return array{0: array[], 1: string[]} */
+    public static function parseReviewLogisticsUpload(string $content): array
+    {
+        $errors = [];
+        $tmp = tempnam(sys_get_temp_dir(), 'rlgu');
+        file_put_contents($tmp, $content);
+        try {
+            $spreadsheet = IOFactory::load($tmp);
+        } catch (\Throwable) {
+            @unlink($tmp);
+            return [[], ['无法读取 Excel 文件，请使用 .xlsx 格式']];
+        }
+        $ws = $spreadsheet->getActiveSheet();
+        $rows = $ws->toArray(null, true, false, false);
+        $spreadsheet->disconnectWorksheets();
+        @unlink($tmp);
+
+        if (!$rows) {
+            return [[], ['文件为空']];
+        }
+
+        $headerRowIdx = null;
+        $colMap = [];
+        foreach (array_slice($rows, 0, 15) as $i => $row) {
+            $mapping = [];
+            foreach (($row ?? []) as $j => $h) {
+                $key = self::headerToKey((string) ($h ?? ''));
+                if ($key !== null && !isset($mapping[$key])) {
+                    $mapping[$key] = $j;
+                }
+            }
+            if (isset($mapping['order_id'], $mapping['sku_id'], $mapping['logistics'])) {
+                $headerRowIdx = $i;
+                $colMap = $mapping;
+                break;
+            }
+        }
+
+        if ($headerRowIdx === null) {
+            return [[], ['缺少必填列「Order ID」「SKU ID」与「刷单运费」（或对应中文列头）']];
+        }
+
+        $parsed = [];
+        $seen = [];
+        foreach (array_slice($rows, $headerRowIdx + 1, null, true) as $idx => $row) {
+            $lineNo = $idx + 1;
+            $row = $row ?? [];
+            $allEmpty = true;
+            foreach ($row as $c) {
+                if ($c !== null && trim((string) $c) !== '') {
+                    $allEmpty = false;
+                    break;
+                }
+            }
+            if ($allEmpty) {
+                continue;
+            }
+
+            $cell = function (string $key) use ($colMap, $row) {
+                $i = $colMap[$key] ?? null;
+                return $i === null ? null : ($row[$i] ?? null);
+            };
+
+            $oid = trim((string) ($cell('order_id') ?? ''));
+            $sku = trim((string) ($cell('sku_id') ?? ''));
+            if ($oid === '' && $sku === '') {
+                continue;
+            }
+            if (str_starts_with($oid, '1234567890') && $sku === '9876543210') {
+                continue;
+            }
+            if ($oid === '') {
+                $errors[] = "第 {$lineNo} 行：Order ID 不能为空";
+                continue;
+            }
+            if ($sku === '') {
+                $errors[] = "第 {$lineNo} 行：SKU ID 不能为空";
+                continue;
+            }
+            $pair = $oid . '|' . $sku;
+            if (isset($seen[$pair])) {
+                $errors[] = "第 {$lineNo} 行：Order ID + SKU ID 重复（{$oid} / {$sku}）";
+                continue;
+            }
+            $seen[$pair] = true;
+
+            $raw = $cell('logistics');
+            $text = trim((string) ($raw ?? ''));
+            if ($text === '') {
+                $logistics = 0.0;
+            } else {
+                $num = FieldAggregator::toNumber($raw);
+                if ($text !== '0' && $text !== '0.0' && $num === 0.0 && !is_int($raw) && !is_float($raw)) {
+                    $errors[] = "第 {$lineNo} 行：刷单运费 不是有效数字";
+                    continue;
+                }
+                $logistics = $num;
+            }
+            $parsed[] = ['order_id' => $oid, 'sku_id' => $sku, 'logistics' => $logistics];
+        }
+
+        if (!$parsed && !$errors) {
+            $errors[] = '未解析到有效运费数据';
+        }
+        return [$parsed, $errors];
+    }
+
+    /** @param array[] $existing @param array[] $logisticsRows @return array[] */
+    private static function mergeReviewLogistics(array $existing, array $logisticsRows): array
+    {
+        $merged = [];
+        foreach ($existing as $row) {
+            $oid = trim((string) ($row['order_id'] ?? ''));
+            $sku = trim((string) ($row['sku_id'] ?? ''));
+            if ($oid !== '' && $sku !== '') {
+                $merged[$oid . '|' . $sku] = $row;
+            }
+        }
+        foreach ($logisticsRows as $row) {
+            $oid = $row['order_id'];
+            $sku = $row['sku_id'];
+            $key = $oid . '|' . $sku;
+            $base = $merged[$key] ?? [
+                'order_id' => $oid,
+                'sku_id' => $sku,
+                'amount' => 0.0,
+                'commission' => 0.0,
+                'service_fee' => 0.0,
+                'cost' => 0.0,
+            ];
+            $base['logistics'] = $row['logistics'] ?? 0.0;
+            $merged[$key] = $base;
+        }
+        return array_values($merged);
+    }
+
+    public static function importReviewLogistics(array &$ds, string $content, bool $strict = true): array
+    {
+        [$logisticsRows, $parseErrors] = self::parseReviewLogisticsUpload($content);
+        if ($parseErrors && !$logisticsRows) {
+            return ['ok' => false, 'errors' => $parseErrors, 'imported' => 0];
+        }
+
+        $known = self::knownOrderSkuKeys($ds);
+        $unknown = [];
+        foreach ($logisticsRows as $r) {
+            if (!isset($known[$r['order_id'] . '|' . $r['sku_id']])) {
+                $unknown[] = "{$r['order_id']}/{$r['sku_id']}";
+            }
+        }
+        $errors = $parseErrors;
+        if ($strict && $unknown) {
+            $preview = implode('、', array_slice($unknown, 0, 5));
+            $suffix = count($unknown) > 5 ? ' 等 ' . count($unknown) . ' 条' : '';
+            $errors[] = "以下 Order ID + SKU ID 在订单主表中不存在：{$preview}{$suffix}";
+        }
+        if ($errors) {
+            return ['ok' => false, 'errors' => $errors, 'imported' => 0, 'unknown_count' => count($unknown)];
+        }
+
+        $cfg0 = DsSettings::getDsConfig($ds);
+        $merged = self::mergeReviewLogistics($cfg0['review_orders'] ?? [], $logisticsRows);
+        $cfg = DsSettings::saveDsConfig($ds, [
+            'review_orders' => $merged,
+            'review_order_ids' => self::reviewOrderIdsFromRows($merged),
+            'review_logistics_mode' => self::REVIEW_LOGISTICS_MODE_IMPORT,
+        ]);
+        $stats = self::reviewImportStats($merged, $cfg);
+        return [
+            'ok' => true,
+            'imported' => count($logisticsRows),
+            'review_order_count' => count($cfg['review_orders'] ?? []),
+            'review_order_distinct' => $stats['order_count'],
+            'review_logistics_total' => $stats['logistics_total'],
+            'review_logistics_summary' => self::reviewLogisticsRuleSummary($cfg),
+        ];
     }
 
     /**

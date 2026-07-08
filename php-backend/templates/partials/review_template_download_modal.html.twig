@@ -1,0 +1,43 @@
+<!-- 刷单 / 运费模板下载选择 -->
+<div id="reviewTemplateDownloadModal"
+  class="app-modal hidden opacity-0"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="reviewTemplateDownloadTitle"
+  aria-hidden="true">
+  <div class="app-modal__backdrop" data-close-review-template-dl data-modal-close></div>
+  <div class="app-modal__panel app-modal__panel--narrow">
+    <header class="app-modal__header">
+      <div class="app-modal__header-main">
+        <h2 id="reviewTemplateDownloadTitle" class="app-modal__title">下载模板</h2>
+        <p class="app-modal__subtitle">选择要下载的 Excel 导入模板</p>
+      </div>
+      <button type="button" class="app-modal__close" data-close-review-template-dl data-modal-close aria-label="关闭">&times;</button>
+    </header>
+    <div class="app-modal__body">
+      <div class="ds-review-mode-grid">
+        <label class="ds-review-mode-option">
+          <input type="radio" name="review_template_kind" value="orders" checked>
+          <span class="ds-review-mode-label">刷单模板</span>
+          <span class="ds-review-mode-hint">Order ID、SKU ID、刷单金额、刷单佣金、刷单服务费、刷单成本</span>
+        </label>
+        <label class="ds-review-mode-option">
+          <input type="radio" name="review_template_kind" value="logistics">
+          <span class="ds-review-mode-label">运费模板</span>
+          <span class="ds-review-mode-hint">Order ID、SKU ID、刷单运费（汇总至刷单物流费用）</span>
+        </label>
+        <label class="ds-review-mode-option">
+          <input type="radio" name="review_template_kind" value="samples">
+          <span class="ds-review-mode-label">样品单模板</span>
+          <span class="ds-review-mode-hint">Order ID、SKU ID、样品单运费、样品单成本</span>
+        </label>
+      </div>
+    </div>
+    <footer class="app-modal__footer app-modal__footer--end">
+      <div class="app-modal__footer-actions">
+        <button type="button" class="btn-modal-cancel" data-close-review-template-dl data-modal-close>取消</button>
+        <button type="button" class="btn-confirm-review-template-dl btn-primary">下载</button>
+      </div>
+    </footer>
+  </div>
+</div>

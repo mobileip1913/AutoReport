@@ -1,0 +1,16 @@
+# 依赖
+frontend/node_modules/
+backend/vendor/
+
+# 构建产物
+frontend/dist/
+backend/public/app/
+
+# 本地配置与数据
+backend/.env
+backend/data/
+*.db
+
+# 编辑器
+.DS_Store
+*.log
