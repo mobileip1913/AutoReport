@@ -1,0 +1,134 @@
+<!-- 日报字段：排序 / 改名 / 数值调整（低频） -->
+<div id="dailyFieldsModal"
+  class="app-modal hidden opacity-0"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="dailyFieldsModalTitle"
+  aria-hidden="true">
+  <div class="app-modal__backdrop" data-close-daily-fields data-modal-close></div>
+  <div class="app-modal__panel app-modal__panel--wide daily-fields-modal__panel">
+    <header class="app-modal__header">
+      <div class="app-modal__header-main">
+        <h2 id="dailyFieldsModalTitle" class="app-modal__title">日报字段</h2>
+        <p class="app-modal__subtitle">拖柄排序 · 点击名称或报表值可编辑；规则请在<a href="/mappings" class="text-link hover:underline">报表配置</a>维护</p>
+      </div>
+      <button type="button" class="app-modal__close" data-close-daily-fields data-modal-close aria-label="关闭">&times;</button>
+    </header>
+    <div class="app-modal__body daily-fields-modal__body">
+      <div id="dailyEditor"
+           data-run-id="{{ run.id if run else '' }}"
+           data-ds-id="{{ active_ds_id }}">
+        <div class="daily-fields-modal__toolbar">
+          <span class="section-table-count">{{ excel_rows|length }}</span>
+          <span class="text-xs text-slate-400">个字段</span>
+        </div>
+        <div class="overflow-x-auto daily-field-scroll">
+          <table class="w-full text-sm min-w-[480px] daily-excel-table daily-excel-table--compact app-table{% if not run %} daily-excel-table--preview{% endif %}">
+            <thead class="bg-slate-50 text-left text-slate-500 text-xs sticky top-0 z-[1]">
+              <tr>
+                <th class="daily-th-drag" aria-label="拖动排序"></th>
+                {% if run %}
+                <th class="px-3 py-2 w-12">列</th>
+                <th class="px-3 py-2 w-16">类型</th>
+                <th class="px-3 py-2">指标名称</th>
+                <th class="px-3 py-2 w-28">系统计算</th>
+                <th class="px-3 py-2 w-32">报表值</th>
+                <th class="px-3 py-2 w-20">状态</th>
+                {% else %}
+                <th class="px-3 py-2">指标字段</th>
+                {% endif %}
+              </tr>
+            </thead>
+            <tbody id="dailyFieldBody">
+              {% for row in excel_rows %}
+              <tr class="daily-row border-t border-slate-100 transition-colors duration-200
+                {% if run and row.is_manual %}daily-row--manual{% elif run and row.is_overridden %}daily-row--overridden{% endif %}
+                {% if not row.configured and not row.is_manual %}daily-row--unconfigured{% endif %}"
+                draggable="false"
+                data-mapping-id="{{ row.mapping_id }}"
+                data-value-id="{{ row.value_id or '' }}"
+                data-format="{{ row.format_type }}"
+                data-manual="{{ '1' if row.is_manual else '0' }}"
+                data-configured="{{ '1' if row.configured else '0' }}"
+                data-computed="{{ row.computed_raw if row.computed_raw is not none else '' }}">
+                <td class="daily-td-drag">
+                  <div class="daily-row-order">
+                    <button type="button" class="daily-order-btn daily-order-btn--up" aria-label="上移一行" title="上移">
+                      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 6.5 6 11.5h8L10 6.5Z" fill="currentColor"/></svg>
+                    </button>
+                    <button type="button" class="drag-handle" draggable="true" title="拖动排序" aria-label="拖动排序">
+                      <svg class="drag-handle-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                        <circle cx="5" cy="4" r="1.35"/>
+                        <circle cx="11" cy="4" r="1.35"/>
+                        <circle cx="5" cy="8" r="1.35"/>
+                        <circle cx="11" cy="8" r="1.35"/>
+                        <circle cx="5" cy="12" r="1.35"/>
+                        <circle cx="11" cy="12" r="1.35"/>
+                      </svg>
+                    </button>
+                    <button type="button" class="daily-order-btn daily-order-btn--down" aria-label="下移一行" title="下移">
+                      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 13.5 14 8.5H6l4 5Z" fill="currentColor"/></svg>
+                    </button>
+                  </div>
+                </td>
+                {% if run %}
+                <td class="px-3 py-2 font-mono text-xs text-slate-400 col-letter tabular-nums">{{ row.col }}</td>
+                <td class="px-3 py-2">
+                  {% include "partials/field_type_tag.html" %}
+                </td>
+                <td class="px-3 py-2">
+                  <div class="field-label-editor">
+                    <button type="button" class="field-label-display" title="{field:{{ row.line_code }}}">{{ row.label }}</button>
+                    <input type="text" class="field-label hidden" value="{{ row.label }}" aria-label="指标名称">
+                  </div>
+                </td>
+                {% else %}
+                <td class="px-3 py-2">
+                  <div class="daily-field-line">
+                    <span class="daily-field-line__col font-mono tabular-nums">{{ row.col }}</span>
+                    <span class="daily-field-line__tag">{% include "partials/field_type_tag.html" %}</span>
+                    <div class="field-label-editor daily-field-line__name">
+                      <button type="button" class="field-label-display" title="{field:{{ row.line_code }}}">{{ row.label }}</button>
+                      <input type="text" class="field-label hidden" value="{{ row.label }}" aria-label="指标名称">
+                    </div>
+                  </div>
+                </td>
+                {% endif %}
+                {% if run %}
+                <td class="px-3 py-2 font-mono text-sm text-slate-500 computed-cell tabular-nums">
+                  {% if row.computed_display %}{{ row.computed_display }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+                </td>
+                <td class="px-3 py-2">
+                  {% if row.editable and not row.is_manual %}
+                  <div class="value-editor relative">
+                    <button type="button" class="value-display w-full text-left font-mono text-sm font-medium px-1.5 py-1 rounded-md border border-transparent hover:border-slate-200 hover:bg-slate-50 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 tabular-nums {% if row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
+                      {{ row.display_value or '—' }}
+                    </button>
+                    <input type="text" inputmode="decimal" class="value-input hidden w-full font-mono text-sm px-1.5 py-1 rounded-md border border-sky-300 focus:ring-2 focus:ring-sky-400 focus:outline-none tabular-nums" value="{{ row.raw_value if row.raw_value is not none else '' }}" placeholder="输入数值">
+                  </div>
+                  {% else %}<span class="text-slate-300">—</span>{% endif %}
+                </td>
+                <td class="px-3 py-2">
+                  {% if row.field_type == 'placeholder' %}
+                  <span class="field-type-tag field-type-tag--placeholder row-status-tag">占位</span>
+                  {% elif row.is_overridden %}
+                  <span class="field-type-tag field-type-tag--warn row-status-tag">已调整</span>
+                  {% elif not row.configured %}
+                  <span class="field-type-tag field-type-tag--muted row-status-tag">未配规则</span>
+                  {% endif %}
+                </td>
+                {% endif %}
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <footer class="app-modal__footer app-modal__footer--end">
+      <div class="app-modal__footer-actions">
+        <button type="button" class="btn-primary" data-close-daily-fields data-modal-close>完成</button>
+      </div>
+    </footer>
+  </div>
+</div>

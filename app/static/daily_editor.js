@@ -49,8 +49,11 @@
 
   function refreshColLetters() {
     tbody.querySelectorAll('.daily-row').forEach((row, i) => {
+      const letter = colLetter(i);
       const el = row.querySelector('.col-letter');
-      if (el) el.textContent = colLetter(i);
+      if (el) el.textContent = letter;
+      const previewCol = row.querySelector('.daily-field-line__col');
+      if (previewCol) previewCol.textContent = letter;
     });
   }
 
@@ -67,19 +70,68 @@
     if (!res.ok) throw new Error(data.detail || '排序保存失败');
     refreshColLetters();
     toast('顺序已保存');
+    updateOrderButtons();
+  }
+
+  function updateOrderButtons() {
+    const rows = [...tbody.querySelectorAll('.daily-row')];
+    rows.forEach((row, i) => {
+      const up = row.querySelector('.daily-order-btn--up');
+      const down = row.querySelector('.daily-order-btn--down');
+      if (up) up.disabled = i === 0;
+      if (down) down.disabled = i === rows.length - 1;
+    });
+  }
+
+  function moveRow(row, direction) {
+    const sibling = direction === 'up' ? row.previousElementSibling : row.nextElementSibling;
+    if (!sibling?.classList.contains('daily-row')) return;
+    if (direction === 'up') {
+      tbody.insertBefore(row, sibling);
+    } else {
+      tbody.insertBefore(sibling, row);
+    }
+    refreshColLetters();
+    updateOrderButtons();
+    saveOrder().catch((err) => toast(err.message, false));
+  }
+
+  function initOrderButtons() {
+    tbody.querySelectorAll('.daily-order-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (btn.disabled) return;
+        const row = btn.closest('.daily-row');
+        if (!row) return;
+        moveRow(row, btn.classList.contains('daily-order-btn--up') ? 'up' : 'down');
+      });
+    });
+    updateOrderButtons();
   }
 
   function initDragDrop() {
     tbody.querySelectorAll('.daily-row').forEach((row) => {
-      row.addEventListener('dragstart', (e) => {
+      const handle = row.querySelector('.drag-handle');
+      if (!handle) return;
+
+      handle.addEventListener('dragstart', (e) => {
+        e.stopPropagation();
         dragSrc = row;
-        row.classList.add('opacity-50', 'daily-row--dragging');
+        row.classList.add('daily-row--dragging');
         e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', row.dataset.mappingId || '');
       });
-      row.addEventListener('dragend', () => {
-        row.classList.remove('opacity-50', 'daily-row--dragging');
+
+      handle.addEventListener('dragend', () => {
+        row.classList.remove('daily-row--dragging');
         dragSrc = null;
       });
+
+      handle.addEventListener('click', (e) => {
+        e.preventDefault();
+      });
+
       row.addEventListener('dragover', (e) => {
         e.preventDefault();
         if (!dragSrc || dragSrc === row) return;
@@ -87,6 +139,7 @@
         const after = e.clientY > rect.top + rect.height / 2;
         tbody.insertBefore(dragSrc, after ? row.nextSibling : row);
       });
+
       row.addEventListener('drop', (e) => {
         e.preventDefault();
         if (!dragSrc) return;
@@ -95,7 +148,7 @@
     });
   }
 
-  async function saveLabel(row, label) {
+  async function saveLabel(row, label, editor) {
     const mappingId = row.dataset.mappingId;
     const res = await fetch(`/api/mappings/${mappingId}/label`, {
       method: 'PATCH',
@@ -104,31 +157,83 @@
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || '改名失败');
-    row.querySelector('.field-label').value = data.label;
+    const input = editor?.querySelector('.field-label');
+    const displayBtn = editor?.querySelector('.field-label-display');
+    if (input) {
+      input.value = data.label;
+      input.dataset.lastLabel = data.label;
+    }
+    if (displayBtn) displayBtn.textContent = data.label;
+    closeLabelEditor(editor);
     toast('名称已保存');
   }
 
-  tbody.querySelectorAll('.field-label').forEach((input) => {
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') input.blur();
-    });
-    input.addEventListener('blur', () => {
-      const row = input.closest('.daily-row');
-      const prev = input.dataset.lastLabel || input.defaultValue;
-      const val = input.value.trim();
-      if (!val) {
-        input.value = prev;
-        return;
-      }
-      if (val === prev) return;
-      saveLabel(row, val).catch((err) => {
-        input.value = prev;
-        toast(err.message, false);
+  let activeLabelEditor = null;
+
+  function closeLabelEditor(editor) {
+    if (!editor) return;
+    const displayBtn = editor.querySelector('.field-label-display');
+    const input = editor.querySelector('.field-label');
+    if (displayBtn && input) {
+      displayBtn.textContent = input.value;
+      displayBtn.classList.remove('hidden');
+      input.classList.add('hidden');
+    }
+    editor.closest('.daily-row')?.classList.remove('daily-row--editing-label');
+    if (activeLabelEditor === editor) activeLabelEditor = null;
+  }
+
+  function initLabelEditors() {
+    tbody.querySelectorAll('.field-label-editor').forEach((editor) => {
+      const displayBtn = editor.querySelector('.field-label-display');
+      const input = editor.querySelector('.field-label');
+      if (!displayBtn || !input) return;
+
+      input.dataset.lastLabel = input.value;
+      displayBtn.textContent = input.value;
+
+      displayBtn.addEventListener('click', () => {
+        if (activeLabelEditor && activeLabelEditor !== editor) closeLabelEditor(activeLabelEditor);
+        displayBtn.classList.add('hidden');
+        input.classList.remove('hidden');
+        input.focus();
+        input.select();
+        activeLabelEditor = editor;
+        editor.closest('.daily-row')?.classList.add('daily-row--editing-label');
       });
-      input.dataset.lastLabel = val;
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') input.blur();
+        if (e.key === 'Escape') {
+          input.value = input.dataset.lastLabel || '';
+          closeLabelEditor(editor);
+        }
+      });
+
+      input.addEventListener('blur', () => {
+        if (activeLabelEditor !== editor) return;
+        const row = editor.closest('.daily-row');
+        const prev = input.dataset.lastLabel || '';
+        const val = input.value.trim();
+        if (!val) {
+          input.value = prev;
+          closeLabelEditor(editor);
+          return;
+        }
+        if (val === prev) {
+          closeLabelEditor(editor);
+          return;
+        }
+        saveLabel(row, val, editor).catch((err) => {
+          input.value = prev;
+          closeLabelEditor(editor);
+          toast(err.message, false);
+        });
+      });
     });
-    input.dataset.lastLabel = input.value;
-  });
+  }
+
+  initLabelEditors();
 
   function parseNumber(raw) {
     const s = String(raw ?? '').trim().replace(/[$,¥,\s]/g, '');
@@ -216,5 +321,16 @@
   }
 
   initDragDrop();
+  initOrderButtons();
   refreshColLetters();
+
+  const fieldsModal = document.getElementById('dailyFieldsModal');
+  const openFieldsModal = () => {
+    if (!fieldsModal) return;
+    window.AppModal?.open(fieldsModal, { focus: false });
+  };
+  if (fieldsModal) {
+    window.AppModal?.bind(fieldsModal, { closeAttr: 'data-close-daily-fields' });
+    document.getElementById('btnOpenDailyFields')?.addEventListener('click', openFieldsModal);
+  }
 })();

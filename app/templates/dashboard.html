@@ -11,12 +11,11 @@
   <header class="home-hub__hero">
     <p class="home-hub__eyebrow">快速开始</p>
     <h1 id="home-hub-title" class="home-hub__title">配置一次，每日自动出报</h1>
+    {% if current_store %}
     <p class="home-hub__lead">
-      在报表配置里定义取数规则，再到日报输出生成并导出 Excel。
-      {% if current_store %}
       <span class="home-hub__store">当前店铺：<strong>{{ current_store.name }}</strong></span>
-      {% endif %}
     </p>
+    {% endif %}
   </header>
 
   <div class="home-hub__steps">
@@ -71,7 +70,5 @@
       </span>
     </a>
   </div>
-
-  <p class="home-hub__footnote">数据由 ETL 脚本同步至数据库；列头变更时在报表配置中调整取数规则即可。</p>
 </section>
 {% endblock %}

@@ -296,12 +296,15 @@ def data_source_mapped_fields(
 ):
     assert_data_source_access(request, db, data_source_id)
     """同数据源下已配置取数行，供「已有字段复用」与公式引用。"""
+    from app.services.mapping_utils import is_report_line
+
     mappings = (
         db.query(FieldMapping)
         .filter(FieldMapping.data_source_id == data_source_id)
-        .order_by(FieldMapping.sort_order, FieldMapping.id)
         .all()
     )
+    # 报表指标行（指标名称）在前，基础取数字段（字段名称）在后
+    mappings.sort(key=lambda m: (0 if is_report_line(m) else 1, m.sort_order or 0, m.id))
     fields = []
     for m in mappings:
         if is_formula_line(m) or is_manual_line(m):

@@ -180,11 +180,43 @@ function ensureRatioBaseSelect(value) {
   const options = getReuseFieldOptions().map((f) => ({ value: f.code, label: f.name }));
   const current = value != null ? value : (ratioBaseSelect?.val() || '');
   if (ratioBaseSelect) ratioBaseSelect.destroy?.();
-  ratioBaseSelect = new SelectField(host, {
-    placeholder: options.length ? '选择基准字段' : '暂无可选字段',
-    options,
+  ratioBaseSelect = new SearchCombo(host, options, {
     value: current,
+    placeholder: options.length ? '搜索并选择基准字段' : '暂无可选字段',
+    emptyHint: '暂无可选字段',
   });
+}
+
+function partBlockType(el) {
+  return el.dataset.partType === 'field_ref' ? 'field_ref' : 'source';
+}
+
+function isPartBlockEmpty(el) {
+  const d = el?._getData?.();
+  if (!d) return true;
+  if (d.ref_field_code) return false;
+  const srcs = d.sources || [];
+  return !srcs.some((s) => (s.sheet_name || '') || (s.column_header || ''));
+}
+
+/** 用户点击 Tab：在「计算 / 复用」之间切换时，若当前仅是空的默认块则替换为目标类型的默认块 */
+function onTabClick(tab) {
+  if (tab === 'fetch' || tab === 'reuse') {
+    const container = document.getElementById('partsContainer');
+    const blocks = [...(container?.querySelectorAll('.mapping-part-block') || [])];
+    const wantType = tab === 'reuse' ? 'field_ref' : 'source';
+    const hasWant = blocks.some((b) => partBlockType(b) === wantType);
+    const allEmpty = blocks.length === 0 || blocks.every(isPartBlockEmpty);
+    if (!hasWant && allEmpty) {
+      parts = [wantType === 'field_ref'
+        ? { type: 'field_ref', combine_op: 'add' }
+        : { type: 'source', combine_op: 'add', aggregation: 'sum', dedup_keys: [], aliases: [] }];
+      setActiveTab(tab);
+      renderParts();
+      return;
+    }
+  }
+  setActiveTab(tab);
 }
 
 function focusMappingModal() {
@@ -544,7 +576,7 @@ function fieldRefPartTemplate(part, idx) {
     ${idx > 0 ? groupConnectorHtml(part.combine_op || 'add') : ''}
     <div class="flex items-center gap-2 flex-wrap">
       <span class="text-xs font-semibold text-teal-700 shrink-0">复用字段</span>
-      <div class="ref-field-select flex-1 min-w-[12rem]"></div>
+      <div class="flex-1 min-w-[12rem]"><div class="ref-field-select"></div></div>
       <code class="ref-field-code text-xs text-slate-500 font-mono shrink-0"></code>
       <span class="ref-field-hint text-xs text-slate-400 shrink-0 hidden sm:inline">点击定位可编辑该字段</span>
       <button type="button" class="btn-goto-aux text-xs text-link shrink-0 hidden">定位</button>
@@ -552,19 +584,21 @@ function fieldRefPartTemplate(part, idx) {
     </div>`;
 
   const gotoBtn = wrap.querySelector('.btn-goto-aux');
-  const fieldSelect = new SelectField(wrap.querySelector('.ref-field-select'), {
-    placeholder: options.length ? '选择已配置的字段' : '暂无其他已配字段',
-    options: options.map((f) => ({
-      value: f.code,
-      label: f.name,
-    })),
-    value: part.ref_field_code || '',
-    onChange: (code) => {
-      wrap.querySelector('.ref-field-code').textContent = code ? `{field:${code}}` : '';
-      syncGotoAuxButton(gotoBtn, code);
-      syncBenchmarkVisibility();
+  const fieldSelect = new SearchCombo(
+    wrap.querySelector('.ref-field-select'),
+    options.map((f) => ({ value: f.code, label: f.name })),
+    {
+      value: part.ref_field_code || '',
+      placeholder: options.length ? '搜索并选择字段' : '暂无其他已配字段',
+      emptyHint: '暂无其他已配字段',
+      onPick: (code) => {
+        wrap.querySelector('.ref-field-code').textContent = code ? `{field:${code}}` : '';
+        syncGotoAuxButton(gotoBtn, code);
+        syncBenchmarkVisibility();
+      },
     },
-  });
+  );
+  wrap._refCombo = fieldSelect;
 
   const syncGotoAuxButton = (btn, code) => {
     const meta = findReuseField(code);
@@ -655,8 +689,7 @@ function getRefFieldSourceFiles(code) {
 function getBlockSourceFiles(blockEl) {
   if (!blockEl) return new Set();
   if (blockEl.dataset.partType === 'field_ref') {
-    const select = blockEl.querySelector('.ref-field-select select');
-    return getRefFieldSourceFiles(select?.value || '');
+    return getRefFieldSourceFiles(blockEl._refCombo?.val() || '');
   }
   const files = new Set();
   const blockFile = blockEl._sourceState?.file;
@@ -1473,7 +1506,7 @@ document.addEventListener('DOMContentLoaded', () => {
     openModal('edit', parseInt(btn.dataset.id, 10)).catch(() => {});
   });
   document.querySelectorAll('.mapping-tab').forEach((btn) => {
-    btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+    btn.addEventListener('click', () => onTabClick(btn.dataset.tab));
   });
   document.getElementById('btnAddPart')?.addEventListener('click', addPartRow);
   document.getElementById('btnAddFieldRef')?.addEventListener('click', () => {

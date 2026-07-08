@@ -43,6 +43,9 @@
           <div class="section-inline-title">生成日报</div>
         </div>
         <div class="flex flex-wrap items-center gap-2 shrink-0">
+          {% if excel_rows is not none %}
+          <button type="button" id="btnOpenDailyFields" class="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 whitespace-nowrap">设置日报字段</button>
+          {% endif %}
           <button type="button" id="btnExportSkuSales" class="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 whitespace-nowrap">导出SKU销量</button>
           <button type="submit" class="btn-primary text-sm font-medium px-4 py-2 rounded-lg shrink-0">生成日报</button>
         </div>
@@ -90,100 +93,12 @@
   <div class="daily-run-strip mb-4">
     <span class="daily-run-strip-label">当前日报</span>
     <span class="daily-run-strip-meta">{{ run.report_date }} · #{{ run.id }}</span>
-    <span class="daily-run-strip-hint">可拖动调整列顺序；双击系统计算可恢复为自动值</span>
+    <span class="daily-run-strip-hint">核对数值、排序与改名请点击「设置日报字段」</span>
   </div>
   {% endif %}
 
   {% if excel_rows is not none %}
-  <div id="dailyEditor" class="section-table-card bg-white rounded-xl shadow border border-slate-200 overflow-hidden"
-       data-run-id="{{ run.id if run else '' }}"
-       data-ds-id="{{ active_ds_id }}">
-    <div class="section-table-header">
-      <div class="section-table-header-main">
-        <span class="section-table-title">日报字段</span>
-        <span class="section-table-count">{{ excel_rows|length }}</span>
-      </div>
-      <span class="section-table-hint" title="拖动左侧手柄调整顺序">拖动排序</span>
-    </div>
-
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm min-w-[720px] daily-excel-table app-table">
-        <thead class="bg-slate-50 text-left text-slate-500 text-xs">
-          <tr>
-            <th class="px-1 py-2 w-12" aria-label="拖动排序"></th>
-            <th class="px-4 py-2 w-14">Excel</th>
-            <th class="px-4 py-2 w-16">类型</th>
-            <th class="px-4 py-2">指标名称</th>
-            {% if run %}
-            <th class="px-4 py-2 w-32">系统计算</th>
-            <th class="px-4 py-2 w-40">报表值</th>
-            <th class="px-4 py-2 w-24">状态</th>
-            {% endif %}
-          </tr>
-        </thead>
-        <tbody id="dailyFieldBody">
-          {% for row in excel_rows %}
-          {% set m = row.mapping %}
-          <tr class="daily-row border-t border-slate-100 transition-colors duration-200
-            {% if run and row.is_manual %}daily-row--manual{% elif run and row.is_overridden %}daily-row--overridden{% endif %}
-            {% if not row.configured and not row.is_manual %}daily-row--unconfigured{% endif %}"
-            draggable="true"
-            data-mapping-id="{{ row.mapping_id }}"
-            data-value-id="{{ row.value_id or '' }}"
-            data-format="{{ row.format_type }}"
-            data-manual="{{ '1' if row.is_manual else '0' }}"
-            data-configured="{{ '1' if row.configured else '0' }}"
-            data-computed="{{ row.computed_raw if row.computed_raw is not none else '' }}">
-            <td class="px-1 py-3 text-center">
-              <span class="drag-handle" title="拖动排序" aria-hidden="true">
-                <svg class="drag-handle-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                  <circle cx="5" cy="4" r="1.35"/>
-                  <circle cx="11" cy="4" r="1.35"/>
-                  <circle cx="5" cy="8" r="1.35"/>
-                  <circle cx="11" cy="8" r="1.35"/>
-                  <circle cx="5" cy="12" r="1.35"/>
-                  <circle cx="11" cy="12" r="1.35"/>
-                </svg>
-              </span>
-            </td>
-            <td class="px-4 py-3 font-mono text-xs text-slate-500 col-letter tabular-nums">{{ row.col }}</td>
-            <td class="px-4 py-3">
-              {% include "partials/field_type_tag.html" %}
-            </td>
-            <td class="px-4 py-3">
-              <input type="text" class="field-label w-full max-w-[14rem] font-medium text-slate-800 border border-transparent hover:border-slate-200 focus:border-sky-300 rounded-lg px-2 py-1 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-200" value="{{ row.label }}">
-              <div class="field-code-hint" title="{field:{{ row.line_code }}}">{field:{{ row.line_code }}}</div>
-            </td>
-            {% if run %}
-            <td class="px-4 py-3 font-mono text-sm text-slate-500 computed-cell tabular-nums">
-              {% if row.computed_display %}{{ row.computed_display }}{% else %}<span class="text-slate-300">—</span>{% endif %}
-            </td>
-            <td class="px-4 py-3">
-              {% if row.editable and not row.is_manual %}
-              <div class="value-editor relative">
-                <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 tabular-nums {% if row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
-                  {{ row.display_value or '—' }}
-                </button>
-                <input type="text" inputmode="decimal" class="value-input hidden w-full font-mono text-sm px-2 py-1.5 rounded-lg border border-sky-300 focus:ring-2 focus:ring-sky-400 focus:outline-none tabular-nums" value="{{ row.raw_value if row.raw_value is not none else '' }}" placeholder="输入数值">
-              </div>
-              {% else %}<span class="text-slate-300">—</span>{% endif %}
-            </td>
-            <td class="px-4 py-3">
-              {% if row.field_type == 'placeholder' %}
-              <span class="field-type-tag field-type-tag--placeholder row-status-tag">占位</span>
-              {% elif row.is_overridden %}
-              <span class="field-type-tag field-type-tag--warn row-status-tag">已调整</span>
-              {% elif not row.configured %}
-              <span class="field-type-tag field-type-tag--muted row-status-tag">未配规则</span>
-              {% endif %}
-            </td>
-            {% endif %}
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </div>
+  {% include "partials/daily_fields_modal.html" %}
   {% elif daily_sources %}
   <div class="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-sm">
     当前店铺暂无日报字段，请前往 <a href="/mappings" class="text-link hover:underline">报表配置</a> 添加。
@@ -210,10 +125,10 @@
 <script>window.DS_SETTINGS = {{ ds_settings_json | safe }};</script>
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
 <script src="/static/app_toast.js?v=20260708b"></script>
-<script src="/static/app_modal.js?v=20260708a"></script>
-<script src="/static/form_controls.js?v=20260708f"></script>
+<script src="/static/app_modal.js?v=20260708v"></script>
+<script src="/static/form_controls.js?v=20260708v"></script>
 <script src="/static/mappings_settings.js?v=20260708k"></script>
-<script src="/static/mapping_modal.js?v=20260708u"></script>
+<script src="/static/mapping_modal.js?v=20260708v"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const dateRoot = document.getElementById('reportDatePicker');
@@ -332,6 +247,6 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 {% endif %}
 {% if excel_rows is not none %}
-<script src="/static/daily_editor.js?v=20260708c"></script>
+<script src="/static/daily_editor.js?v=20260708g"></script>
 {% endif %}
 {% endblock %}

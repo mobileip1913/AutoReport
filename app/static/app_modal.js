@@ -5,12 +5,20 @@ const AppModal = (() => {
 
   function lockScroll() {
     scrollLockCount += 1;
-    if (scrollLockCount === 1) document.body.classList.add('overflow-hidden');
+    if (scrollLockCount === 1) {
+      // 补偿滚动条宽度，避免锁定滚动后页面变宽跳动
+      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+      if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+      document.body.classList.add('overflow-hidden');
+    }
   }
 
   function unlockScroll() {
     scrollLockCount = Math.max(0, scrollLockCount - 1);
-    if (scrollLockCount === 0) document.body.classList.remove('overflow-hidden');
+    if (scrollLockCount === 0) {
+      document.body.classList.remove('overflow-hidden');
+      document.body.style.paddingRight = '';
+    }
   }
 
   function getPanel(modal) {

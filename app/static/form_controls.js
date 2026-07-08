@@ -70,7 +70,7 @@ class SearchCombo {
     portal = null,
   } = {}) {
     this.container = container;
-    this.options = options || [];
+    this._setOptions(options);
     this.onPick = onPick;
     this.emptyHint = emptyHint;
     this.noMatchHint = noMatchHint;
@@ -90,7 +90,7 @@ class SearchCombo {
     this.container.className = 'relative';
     this.input = document.createElement('input');
     this.input.type = 'text';
-    this.input.value = value;
+    this.input.value = this.objectMode ? (this._labelByValue[value] || '') : (value || '');
     this.input.placeholder = placeholder;
     const sizeCls = size === 'md' ? 'form-control--md' : '';
     this.input.className = inputClass || `form-control ${sizeCls} font-mono`.trim();
@@ -176,7 +176,7 @@ class SearchCombo {
           e.preventDefault();
           this.input.value = opt;
           this.hide();
-          if (this.onPick) this.onPick(opt);
+          if (this.onPick) this.onPick(this.objectMode ? (this._valueByLabel[opt] ?? '') : opt);
         };
         this.dropdown.appendChild(btn);
       });
@@ -188,10 +188,37 @@ class SearchCombo {
     this.dropdown.classList.remove('hidden');
   }
 
-  val() { return (this.input?.value || '').trim(); }
-  set(val) { if (this.input) this.input.value = val || ''; }
+  _setOptions(list) {
+    const opts = list || [];
+    this.objectMode = opts.some((o) => o && typeof o === 'object');
+    this._valueByLabel = {};
+    this._labelByValue = {};
+    if (this.objectMode) {
+      this.options = opts.map((o) => {
+        const label = (o && typeof o === 'object') ? String(o.label) : String(o);
+        const value = (o && typeof o === 'object') ? o.value : o;
+        this._valueByLabel[label] = value;
+        this._labelByValue[value] = label;
+        return label;
+      });
+    } else {
+      this.options = opts;
+    }
+  }
+
+  val() {
+    const text = (this.input?.value || '').trim();
+    if (this.objectMode) return this._valueByLabel[text] ?? '';
+    return text;
+  }
+
+  set(val) {
+    if (!this.input) return;
+    this.input.value = this.objectMode ? (this._labelByValue[val] || '') : (val || '');
+  }
+
   setOpts(opts) {
-    this.options = opts || [];
+    this._setOptions(opts);
     if (this.input && this.input === document.activeElement) this.show(this.input.value);
   }
 
