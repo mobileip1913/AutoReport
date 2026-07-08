@@ -112,6 +112,7 @@ def build_dynamic_report_rows(
 ) -> list[dict]:
     """按 FieldMapping.sort_order 构建报表字段行（日报 + 报表配置共用）。"""
     from app.services.mapping_utils import (
+        field_display_type,
         is_formula_line,
         is_manual_line,
         mapping_label,
@@ -145,6 +146,7 @@ def build_dynamic_report_rows(
             computed_display = rv.display_value
 
         configured = bool(m.parts or (m.sheet_name and m.column_header))
+        ftype = field_display_type(m, code)
         rows.append({
             "col": column_for_report_field(m, mappings),
             "sort_order": m.sort_order or 0,
@@ -152,9 +154,10 @@ def build_dynamic_report_rows(
             "mapping": m,
             "mapping_id": m.id,
             "line_code": code,
+            "field_type": ftype,
             "is_manual": is_manual,
             "is_formula": is_formula_fn(m),
-            "is_fetch": not is_manual and not is_formula_fn(m),
+            "is_fetch": ftype == "fetch",
             "configured": configured,
             "pending_file": code in pending,
             "format_type": m.format_type or "usd",

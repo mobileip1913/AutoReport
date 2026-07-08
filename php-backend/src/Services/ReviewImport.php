@@ -18,14 +18,13 @@ final class ReviewImport
     public const REVIEW_LOGISTICS_MODE_IMPORT = 'from_import';
     public const DEFAULT_REVIEW_LOGISTICS_PER_ORDER = 1.0;
 
-    /** [内部键, 模板列名, 是否必填] */
+    /** [内部键, 模板列名, 是否必填] — 物流费不在 Excel 中维护 */
     public const REVIEW_COLUMNS = [
         ['order_id', 'Order ID', true],
         ['sku_id', 'SKU ID', true],
         ['amount', '刷单金额', false],
         ['commission', '刷单佣金', false],
         ['service_fee', '刷单服务费', false],
-        ['logistics', '刷单物流费用', false],
         ['cost', '刷单成本', false],
     ];
 
@@ -146,12 +145,12 @@ final class ReviewImport
         $spreadsheet = new Spreadsheet();
         $ws = $spreadsheet->getActiveSheet();
         $ws->setTitle('刷单清单');
-        $ws->fromArray(['说明：每行一条刷单 SKU；Order ID、SKU ID 必填；若店铺设为「按单固定物流费」，物流费用列可留空'], null, 'A1');
+        $ws->fromArray(['说明：每行一条刷单 SKU；Order ID、SKU ID 必填；金额/佣金/服务费/成本填在对应列；物流费不在此表维护，请在「刷单设置」配置每单固定金额'], null, 'A1');
         $ws->fromArray(self::templateHeaders(), null, 'A2');
         $ws->getStyle('A3:B3')->getNumberFormat()->setFormatCode('@');
         $ws->setCellValueExplicit('A3', '1234567890123456789', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
         $ws->setCellValueExplicit('B3', '9876543210', \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
-        $ws->fromArray([100, 10, 5, 8, 50], null, 'C3');
+        $ws->fromArray([100, 10, 5, 50], null, 'C3');
 
         $tmp = tempnam(sys_get_temp_dir(), 'rvw');
         (new Xlsx($spreadsheet))->save($tmp);

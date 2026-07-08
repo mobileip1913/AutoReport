@@ -197,7 +197,14 @@ class FieldMapping(Base):
     data_source_id = Column(ForeignKey("data_sources.id"))
     logical_field_id = Column(ForeignKey("logical_fields.id"), nullable=True)
     # 报表行（与取数/公式合并）
-    line_type = Column(String(10), default="fetch")  # fetch | formula
+    line_type = Column(String(10), default="fetch")  # fetch | formula | manual | per_order | ratio
+    # 每单金额（line_type=per_order）：出报时 = 该金额 × 单数（口径见 per_order_basis）
+    per_order_amount = Column(Float, nullable=True)
+    # 单数口径：valid_orders(当日去重有效订单数) | review_orders(刷单单数)
+    per_order_basis = Column(String(20), nullable=True)
+    # 按比例（line_type=ratio）：出报时 = 复用字段(ratio_base_code) 的值 × ratio_percent%
+    ratio_percent = Column(Float, nullable=True)
+    ratio_base_code = Column(String(50), nullable=True)
     label = Column(String(100), nullable=True)
     line_code = Column(String(50), nullable=True)
     report_group = Column(String(100), nullable=True)

@@ -6,7 +6,14 @@ from app.models import DataImport, DataRow, DataSource, FieldMapping, FieldMappi
 from app.services.catalog_resolver import has_catalog
 from app.services.fact_provider import load_fact_rows
 from app.services.field_aggregator import aggregate_part, build_daily_context, combine_parts, resolve_part_value
-from app.services.mapping_utils import is_fetch_line, mapping_line_code
+from app.services.mapping_utils import (
+    PER_ORDER_BASIS_REVIEW,
+    is_fetch_line,
+    is_per_order_line,
+    is_ratio_line,
+    mapping_line_code,
+    per_order_basis,
+)
 
 
 def _to_number(value) -> float:
@@ -85,8 +92,10 @@ def aggregate_field_values(
 
     if daily_mode and data_source.config:
         from app.services.review_import import review_field_values
+        from app.services.sample_import import sample_field_values
         same_day_ids = context.same_day_refund_order_ids if context else None
         field_values.update(review_field_values(data_source.config, same_day_ids))
+        field_values.update(sample_field_values(data_source.config))
 
     for _ in range(len(fetch_mappings) + 1):
         changed = False
@@ -137,6 +146,26 @@ def aggregate_field_values(
                     warnings.append(f"字段「{display}」未配置取数规则")
         if not changed:
             break
+
+    # 每单金额行：= per_order_amount × 单数（口径见 per_order_basis）
+    valid_count = float(len(context.valid_order_ids)) if context else 0.0
+    review_count = float(len(context.review_order_ids)) if context else 0.0
+    for mapping in mappings:
+        if not is_per_order_line(mapping):
+            continue
+        code = mapping_line_code(mapping)
+        amount = float(mapping.per_order_amount or 0.0)
+        count = review_count if per_order_basis(mapping) == PER_ORDER_BASIS_REVIEW else valid_count
+        field_values[code] = amount * count
+
+    # 按比例行：= 复用字段(ratio_base_code) 的值 × ratio_percent%
+    for mapping in mappings:
+        if not is_ratio_line(mapping):
+            continue
+        code = mapping_line_code(mapping)
+        base = field_values.get(mapping.ratio_base_code or "", 0.0)
+        percent = float(mapping.ratio_percent or 0.0)
+        field_values[code] = base * percent / 100.0
 
     return field_values, warnings
 

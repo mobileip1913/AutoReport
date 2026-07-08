@@ -1,12 +1,7 @@
 /** 报表配置页：日期主表 + 每日自动生成时间 */
 
 function settingsToast(msg, ok = true) {
-  const el = document.getElementById('toast') || document.getElementById('dailyToast');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white ${ok ? 'bg-emerald-600' : 'bg-red-600'}`;
-  el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 2800);
+  window.showAppToast?.(msg, ok);
 }
 
 async function apiJson(url, opts = {}) {
@@ -14,6 +9,94 @@ async function apiJson(url, opts = {}) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || data.message || '请求失败');
   return data;
+}
+
+function initInlineTimeGrid(root) {
+  const hidden = root.querySelector('.ds-daily-time');
+  const hourGrid = root.querySelector('.ds-time-hour-grid');
+  const minGrid = root.querySelector('.ds-time-min-grid');
+  const valueEl = root.querySelector('.ds-time-inline-value');
+  const clearBtn = root.querySelector('.ds-time-inline-clear');
+  if (!hidden || !hourGrid || !minGrid || !valueEl) return null;
+
+  const pad = (n) => String(n).padStart(2, '0');
+  let selectedHour = '';
+  let selectedMin = '';
+
+  const renderActive = () => {
+    hourGrid.querySelectorAll('.ds-time-option').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.value === selectedHour);
+    });
+    minGrid.querySelectorAll('.ds-time-option').forEach((btn) => {
+      btn.classList.toggle('is-active', btn.dataset.value === selectedMin);
+    });
+  };
+
+  const syncHidden = () => {
+    if (selectedHour !== '' && selectedMin !== '') {
+      hidden.value = `${selectedHour}:${selectedMin}`;
+      valueEl.textContent = hidden.value;
+      valueEl.classList.add('is-set');
+    } else {
+      hidden.value = '';
+      valueEl.textContent = '未设置';
+      valueEl.classList.remove('is-set');
+    }
+    renderActive();
+  };
+
+  const makeOption = (value, label, onClick) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'ds-time-option';
+    btn.dataset.value = value;
+    btn.textContent = label;
+    btn.addEventListener('click', onClick);
+    return btn;
+  };
+
+  hourGrid.innerHTML = '';
+  minGrid.innerHTML = '';
+
+  for (let i = 0; i < 24; i += 1) {
+    const value = pad(i);
+    hourGrid.appendChild(makeOption(value, value, () => {
+      selectedHour = value;
+      syncHidden();
+    }));
+  }
+
+  for (let i = 0; i < 60; i += 5) {
+    const value = pad(i);
+    minGrid.appendChild(makeOption(value, value, () => {
+      selectedMin = value;
+      syncHidden();
+    }));
+  }
+
+  const applyValue = (val) => {
+    if (val && /^\d{1,2}:\d{1,2}/.test(val)) {
+      const [h, m] = val.split(':');
+      selectedHour = pad(parseInt(h, 10));
+      selectedMin = pad(parseInt(m, 10));
+      if (!minGrid.querySelector(`[data-value="${selectedMin}"]`)) {
+        const customMin = selectedMin;
+        minGrid.appendChild(makeOption(customMin, customMin, () => {
+          selectedMin = customMin;
+          syncHidden();
+        }));
+      }
+    } else {
+      selectedHour = '';
+      selectedMin = '';
+    }
+    syncHidden();
+  };
+
+  clearBtn?.addEventListener('click', () => applyValue(''));
+  applyValue(hidden.value || '');
+
+  return { applyValue };
 }
 
 function initTimePicker(card) {
@@ -163,6 +246,57 @@ function initTimePicker(card) {
   return { applyValue };
 }
 
+function updateScheduleLabel(dsId, time) {
+  const card = document.querySelector(`.ds-settings-card[data-ds-id="${dsId}"]`);
+  const el = card?.querySelector('.ds-schedule-label');
+  if (el) el.textContent = time || '未设置';
+}
+
+function bindScheduleSettingsModal() {
+  const modal = document.getElementById('scheduleSettingsModal');
+  if (!modal) return;
+
+  const timeInput = modal.querySelector('.ds-daily-time');
+  const timePicker = initInlineTimeGrid(modal);
+  const saveBtn = modal.querySelector('.btn-save-schedule-settings');
+  let activeDsId = null;
+
+  window.AppModal?.bind(modal, { closeAttr: 'data-close-schedule-settings' });
+
+  const fillFromSettings = (dsId) => {
+    const st = (window.DS_SETTINGS || {})[dsId] || {};
+    if (timePicker) timePicker.applyValue(st.daily_generate_at || '');
+  };
+
+  document.querySelectorAll('.btn-open-schedule').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeDsId = parseInt(btn.dataset.dsId, 10);
+      if (!activeDsId) return;
+      fillFromSettings(activeDsId);
+      window.AppModal.open(modal);
+    });
+  });
+
+  saveBtn?.addEventListener('click', async () => {
+    if (!activeDsId) return;
+    try {
+      const data = await apiJson(`/api/data-sources/${activeDsId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ daily_generate_at: timeInput?.value || null }),
+      });
+      if (window.DS_SETTINGS) {
+        window.DS_SETTINGS[activeDsId] = { ...(window.DS_SETTINGS[activeDsId] || {}), ...data };
+      }
+      updateScheduleLabel(activeDsId, data.daily_generate_at || '');
+      settingsToast('自动生成时间已保存');
+      window.AppModal.close(modal);
+    } catch (e) {
+      settingsToast(e.message, false);
+    }
+  });
+}
+
 function updateReviewSidebarCounts(dsId, data) {
   const card = document.querySelector(`.ds-settings-card[data-ds-id="${dsId}"]`);
   if (!card || !data) return;
@@ -198,7 +332,6 @@ function bindReviewSettingsModal() {
   const modal = document.getElementById('reviewSettingsModal');
   if (!modal) return;
 
-  const panel = document.getElementById('reviewSettingsPanel');
   const templateLink = modal.querySelector('.review-template-link');
   const importInput = modal.querySelector('.review-import-input');
   const importHint = modal.querySelector('.review-import-hint');
@@ -207,14 +340,7 @@ function bindReviewSettingsModal() {
   const saveBtn = modal.querySelector('.btn-save-review-settings');
   let activeDsId = null;
 
-  const setOpen = (open) => {
-    modal.classList.toggle('hidden', !open);
-    requestAnimationFrame(() => {
-      modal.classList.toggle('opacity-0', !open);
-      if (panel) panel.classList.toggle('scale-95', !open);
-    });
-    document.body.classList.toggle('overflow-hidden', open);
-  };
+  window.AppModal?.bind(modal, { closeAttr: 'data-close-review-settings' });
 
   const showImportHint = (text, ok = true) => {
     if (!importHint) return;
@@ -225,7 +351,6 @@ function bindReviewSettingsModal() {
 
   const fillFromSettings = (dsId) => {
     const st = (window.DS_SETTINGS || {})[dsId] || {};
-    if (templateLink) templateLink.href = `/daily/review-template?data_source_id=${dsId}`;
     if (perOrderInput) perOrderInput.value = String(st.review_logistics_per_order ?? 1);
     if (excludeSameDayRefund) {
       excludeSameDayRefund.checked = st.review_logistics_exclude_same_day_refund !== false;
@@ -251,15 +376,13 @@ function bindReviewSettingsModal() {
       activeDsId = parseInt(btn.dataset.dsId, 10);
       if (!activeDsId) return;
       fillFromSettings(activeDsId);
-      setOpen(true);
+      window.AppModal.open(modal);
     });
   });
 
-  modal.querySelectorAll('[data-close-review-settings]').forEach((el) => {
-    el.addEventListener('click', () => setOpen(false));
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' && !modal.classList.contains('hidden')) setOpen(false);
+  templateLink?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (activeDsId) window.openReviewTemplateDownloadModal?.(activeDsId);
   });
 
   importInput?.addEventListener('change', async () => {
@@ -290,7 +413,7 @@ function bindReviewSettingsModal() {
       const orders = data.review_order_distinct ?? data.imported;
       let msg = `已导入 ${data.imported} 行 · ${orders} 个刷单订单`;
       if (data.review_logistics_total != null) {
-        msg += ` · 物流费将计 $${Number(data.review_logistics_total).toFixed(2)}`;
+        msg += ` · 按当前物流费规则将计 $${Number(data.review_logistics_total).toFixed(2)}`;
       }
       showImportHint(msg, true);
     } catch (e) {
@@ -312,8 +435,8 @@ function bindReviewSettingsModal() {
         }),
       });
       applySettingsData(activeDsId, data);
-      settingsToast('刷单设置已保存');
-      setOpen(false);
+      settingsToast('物流费设置已保存');
+      window.AppModal.close(modal);
     } catch (e) {
       settingsToast(e.message, false);
     }
@@ -328,8 +451,6 @@ function bindSettingsCard(card) {
   const fileHost = card.querySelector('.ds-order-file-host');
   const sheetHost = card.querySelector('.ds-order-sheet-host');
   const dateColHost = card.querySelector('.ds-order-date-col-host');
-  const timeInput = card.querySelector('.ds-daily-time');
-  const timePicker = initTimePicker(card);
   const reviewCount = card.querySelector('.ds-review-count');
 
   let sheetSelect;
@@ -388,13 +509,11 @@ function bindSettingsCard(card) {
   };
 
   const initial = (window.DS_SETTINGS || {})[dsId] || {};
-  const tplSel = card.querySelector('.ds-excel-template');
-  if (initial.excel_template_file && tplSel) tplSel.value = initial.excel_template_file;
   if (initial.order_file) fileSelect.set(initial.order_file);
   loadSheets(initial.order_file, initial.order_sheet).then(() => {
     return loadCols(initial.order_file, initial.order_sheet, initial.order_date_col);
   }).then(() => {
-    if (initial.daily_generate_at && timePicker) timePicker.applyValue(initial.daily_generate_at);
+    updateScheduleLabel(dsId, initial.daily_generate_at);
     if (reviewCount) reviewCount.textContent = String(initial.review_order_count || 0);
     const orderCountEl = card.querySelector('.ds-review-order-count');
     if (orderCountEl) orderCountEl.textContent = String(initial.review_order_distinct || 0);
@@ -407,8 +526,6 @@ function bindSettingsCard(card) {
         order_file: fileSelect.val() || null,
         order_sheet: sheetSelect.val() || null,
         order_date_col: dateColCombo.val() || null,
-        daily_generate_at: timeInput.value || null,
-        excel_template_file: card.querySelector('.ds-excel-template')?.value || null,
       };
       const data = await apiJson(`/api/data-sources/${dsId}/settings`, {
         method: 'PUT',
@@ -416,8 +533,6 @@ function bindSettingsCard(card) {
         body: JSON.stringify(body),
       });
       settingsToast('店铺设置已保存');
-      const summary = card.querySelector('.ds-date-summary');
-      if (summary) summary.textContent = data.date_master_summary || '未配置';
       if (window.DS_SETTINGS) window.DS_SETTINGS[dsId] = { ...(window.DS_SETTINGS[dsId] || {}), ...data };
     } catch (e) {
       settingsToast(e.message, false);
@@ -468,8 +583,78 @@ function bindExportButtons() {
   });
 }
 
+function bindAuxFieldPanels() {
+  const AUX_SEEN_KEY = 'autoreport_aux_banner_dismissed';
+
+  document.querySelectorAll('[id^="aux-fields-"]').forEach((panel) => {
+    const dsId = panel.dataset.dsId || '';
+    const toggle = panel.querySelector('.aux-fields-toggle');
+    const body = panel.querySelector('.aux-fields-body');
+    const banner = panel.querySelector('.aux-first-use-banner');
+    const dismiss = panel.querySelector('.aux-first-use-dismiss');
+    if (!toggle || !body) return;
+
+    const setExpanded = (open) => {
+      body.classList.toggle('is-collapsed', !open);
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    setExpanded(false);
+
+    toggle.addEventListener('click', () => {
+      const open = body.classList.contains('is-collapsed');
+      setExpanded(open);
+    });
+
+    if (banner && localStorage.getItem(AUX_SEEN_KEY) === '1') {
+      banner.classList.add('is-dismissed');
+    }
+
+    dismiss?.addEventListener('click', () => {
+      localStorage.setItem(AUX_SEEN_KEY, '1');
+      banner?.classList.add('is-dismissed');
+    });
+  });
+}
+
+function bindReviewTemplateDownloadModal() {
+  const modal = document.getElementById('reviewTemplateDownloadModal');
+  if (!modal) return;
+
+  window.AppModal?.bind(modal, { closeAttr: 'data-close-review-template-dl' });
+
+  window.openReviewTemplateDownloadModal = (dsId, kind = 'orders') => {
+    if (!dsId) return;
+    modal.dataset.dsId = String(dsId);
+    const radio = modal.querySelector(`input[name="review_template_kind"][value="${kind}"]`);
+    if (radio) radio.checked = true;
+    window.AppModal?.open(modal);
+  };
+
+  modal.querySelector('.btn-confirm-review-template-dl')?.addEventListener('click', () => {
+    const dsId = modal.dataset.dsId;
+    if (!dsId) return;
+    const kind = modal.querySelector('input[name="review_template_kind"]:checked')?.value || 'orders';
+    const url = kind === 'logistics'
+      ? `/daily/review-logistics-template?data_source_id=${encodeURIComponent(dsId)}`
+      : kind === 'samples'
+        ? `/daily/sample-template?data_source_id=${encodeURIComponent(dsId)}`
+        : `/daily/review-template?data_source_id=${encodeURIComponent(dsId)}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.AppModal?.close(modal);
+  });
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.ds-settings-card').forEach(bindSettingsCard);
+  bindReviewTemplateDownloadModal();
   bindReviewSettingsModal();
+  bindScheduleSettingsModal();
   bindExportButtons();
+  bindAuxFieldPanels();
 });

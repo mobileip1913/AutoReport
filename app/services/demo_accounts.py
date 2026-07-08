@@ -1,4 +1,4 @@
-"""Demo 账号 / 店铺种子：仅保留美宠真实店铺。"""
+"""店铺与默认账号种子。"""
 
 from __future__ import annotations
 
@@ -25,15 +25,11 @@ from app.services.meichong_rules import MEICHONG_CONFIG
 from app.services.production_store import production_store_table_exists, sync_store_production_ids
 from app.services.seed import MEICHONG_STORE, ensure_meichong_datasource
 
-# 已废弃的 Demo 欧区店（启动时自动清理）
 LEGACY_DEMO_STORE_B_NAME = "美宠Demo-欧洲区店铺"
 LEGACY_DEMO_STORE_B_SOURCE = "美宠-欧洲区Demo店铺(TK-EU)"
+LEGACY_DEMO_LOGINS = ("zhang", "li", "wang")
 
-DEMO_ACCOUNTS = [
-    ("zhang", "张财务", [MEICHONG_STORE]),
-    ("li", "李运营", [MEICHONG_STORE]),
-    ("wang", "王主管", [MEICHONG_STORE]),
-]
+DEFAULT_ACCOUNT = ("default", "财务", [MEICHONG_STORE])
 
 
 def _remove_legacy_demo_store_b(db: Session) -> None:
@@ -131,8 +127,19 @@ def _link_account_store(db: Session, account: Account, store: Store) -> None:
         db.commit()
 
 
+def _remove_legacy_demo_accounts(db: Session) -> None:
+    for login_name in LEGACY_DEMO_LOGINS:
+        account = db.query(Account).filter(Account.login_name == login_name).first()
+        if not account:
+            continue
+        db.query(AccountStore).filter(AccountStore.account_id == account.id).delete(synchronize_session=False)
+        db.delete(account)
+    db.commit()
+
+
 def ensure_demo_accounts(db: Session) -> None:
     _remove_legacy_demo_store_b(db)
+    _remove_legacy_demo_accounts(db)
 
     src_ds = ensure_meichong_datasource(db)
     cfg = MEICHONG_CONFIG
@@ -147,23 +154,23 @@ def ensure_demo_accounts(db: Session) -> None:
     if production_store_table_exists():
         sync_store_production_ids(db)
 
-    for login_name, display_name, store_names in DEMO_ACCOUNTS:
-        account = db.query(Account).filter(Account.login_name == login_name).first()
-        if not account:
-            account = Account(login_name=login_name, display_name=display_name)
-            db.add(account)
-            db.commit()
-            db.refresh(account)
-        else:
-            account.display_name = display_name
-            db.commit()
-
-        allowed_ids = {store.id} if MEICHONG_STORE in store_names else set()
-        for store_name in store_names:
-            if store_name == MEICHONG_STORE:
-                _link_account_store(db, account, store)
-
-        for link in list(account.store_links):
-            if link.store_id not in allowed_ids:
-                db.delete(link)
+    login_name, display_name, store_names = DEFAULT_ACCOUNT
+    account = db.query(Account).filter(Account.login_name == login_name).first()
+    if not account:
+        account = Account(login_name=login_name, display_name=display_name)
+        db.add(account)
         db.commit()
+        db.refresh(account)
+    else:
+        account.display_name = display_name
+        db.commit()
+
+    allowed_ids = {store.id} if MEICHONG_STORE in store_names else set()
+    for store_name in store_names:
+        if store_name == MEICHONG_STORE:
+            _link_account_store(db, account, store)
+
+    for link in list(account.store_links):
+        if link.store_id not in allowed_ids:
+            db.delete(link)
+    db.commit()

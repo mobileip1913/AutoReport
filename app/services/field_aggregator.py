@@ -150,6 +150,14 @@ def build_daily_context(rows: list[DataRow], ds_config: dict, report_date: str) 
             per_order[oid] += sum(_to_number(nd.get(c)) for c in sum_cols)
 
     sample_ids = {oid for oid, total in per_order.items() if abs(total) < 0.01}
+    for row in cfg.get("sample_orders") or []:
+        oid = str(row.get("order_id", "")).strip()
+        if oid:
+            sample_ids.add(oid)
+    for oid in cfg.get("sample_order_ids") or []:
+        oid = str(oid).strip()
+        if oid:
+            sample_ids.add(oid)
     review_ids = {str(x).strip() for x in (cfg.get("review_order_ids") or [])}
 
     valid_keys: set[tuple[str, str]] = set()
@@ -408,7 +416,11 @@ def _source_part(base: FieldMappingPart, src: dict) -> FieldMappingPart:
         dedup_keys=base.dedup_keys or [],
         date_filter_column=base.date_filter_column,
         date_format=base.date_format,
-        row_filters=base.row_filters or [],
+        row_filters=(
+            src.get("row_filters")
+            if src.get("row_filters") is not None
+            else (base.row_filters or [])
+        ),
         exclude_sample=base.exclude_sample,
         exclude_review=base.exclude_review,
         exclude_same_day_refund=getattr(base, "exclude_same_day_refund", False),

@@ -1,384 +1,337 @@
 {% extends "base.html" %}
-
 {% block title %}日报输出 - AutoReport{% endblock %}
-
 {% block content %}
+{% set review_excel_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_cost'] %}
+{% set review_logistics_codes = ['mc_review_logistics'] %}
+{% set review_import_codes = review_excel_import_codes + review_logistics_codes %}
 
-{% set review_import_codes = ['mc_review_amount', 'mc_review_commission', 'mc_review_service_fee', 'mc_review_logistics', 'mc_review_cost'] %}
-
-<div class="mb-6">
-
-  <h1 class="text-2xl font-bold">日报输出</h1>
-
-  <p class="text-sm text-slate-500 mt-1">在此管理报表字段（增删改序、配置取数），与
-
-    <a href="/mappings" class="text-link hover:underline">报表配置</a> 同步；生成日报后可填写/调整数值。</p>
-
+<div class="flex flex-wrap items-center justify-between mb-6 gap-3">
+  <div class="flex flex-wrap items-center gap-3 min-w-0">
+    <h1 class="text-2xl font-bold shrink-0">日报输出</h1>
+    {% if accessible_stores %}
+    <form method="post" action="/demo/switch-store" class="flex flex-wrap items-center gap-2 min-w-0">
+      <input type="hidden" name="next_url" value="/daily">
+      <span class="text-xs font-medium text-slate-500 shrink-0">店铺</span>
+      <select name="store_id" class="store-bind-select border rounded-lg px-3 py-2 text-sm min-w-[220px] max-w-full" onchange="this.form.submit()">
+        {% for store in accessible_stores %}
+        <option value="{{ store.id }}" {% if current_store and store.id == current_store.id %}selected{% endif %}>
+          {{ store.name }} · {{ store.platform }}
+        </option>
+        {% endfor %}
+      </select>
+    </form>
+    {% endif %}
+  </div>
+  {% if run %}
+  <div class="flex flex-wrap items-center gap-2 shrink-0">
+    <span id="saveStatus" class="text-xs text-slate-400">已同步</span>
+    <a href="/daily/{{ run.id }}/export" class="btn-primary text-sm font-medium px-4 py-2 rounded-lg">导出 Excel</a>
+    <a href="/daily/{{ run.id }}/export-sku" class="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">导出SKU销量</a>
+  </div>
+  {% endif %}
 </div>
 
+<div id="dailyToast" class="app-toast hidden" role="status" aria-live="polite"></div>
 
-
-<div class="bg-white rounded-xl shadow border border-slate-100 p-5 mb-6">
-
-  <form method="post" action="/daily/generate" class="flex flex-wrap items-end gap-4">
-
-    <div>
-
-      <label class="block text-xs text-slate-500 mb-1">店铺（报表配置）</label>
-
-      <select name="data_source_id" class="border rounded-lg px-3 py-2 text-sm min-w-[260px]">
-
-        {% for ds in daily_sources %}
-
-        <option value="{{ ds.id }}" {% if active_ds_id == ds.id %}selected{% endif %}>{{ ds.name }}</option>
-
-        {% endfor %}
-
-      </select>
-
-    </div>
-
-    <div>
-
-      <label class="block text-xs text-slate-500 mb-1">报表日期</label>
-
-      <input type="date" name="report_date" value="{{ run.report_date if run else '2026-06-22' }}"
-
-             class="border rounded-lg px-3 py-2 text-sm">
-
-    </div>
-
-    <button type="submit" class="btn-primary text-sm font-medium">
-
-      生成日报
-
-    </button>
-
-    <div class="flex flex-wrap items-end gap-2 border-l border-slate-200 pl-4 ml-1">
-      <div>
-        <label class="block text-xs text-slate-500 mb-1">刷单数据</label>
-        <div class="flex gap-2">
-          <a id="btnReviewTemplate" href="#" class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700">下载模板</a>
-          <label class="px-3 py-2 text-sm border border-sky-200 text-sky-700 rounded-lg hover:bg-sky-50 cursor-pointer">
-            导入刷单
-            <input type="file" id="reviewImportInput" accept=".xlsx" class="hidden">
-          </label>
+{% if active_ds_id %}
+<section class="mb-8">
+  <div class="ds-settings-card bg-white rounded-xl shadow border border-slate-200 mb-4">
+    <form method="post" action="/daily/generate" class="px-4 py-3">
+      <input type="hidden" name="data_source_id" id="dailyDsId" value="{{ active_ds_id }}">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div class="section-inline-title">生成日报</div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 shrink-0">
+          <button type="button" id="btnExportSkuSales" class="px-4 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 whitespace-nowrap">导出SKU销量</button>
+          <button type="submit" class="btn-primary text-sm font-medium px-4 py-2 rounded-lg shrink-0">生成日报</button>
         </div>
       </div>
-      <p id="reviewImportHint" class="text-xs text-slate-400 self-center hidden"></p>
-    </div>
-
-    {% if not daily_sources %}
-
-    <span class="text-sm text-red-500">暂无已配置日报的数据源</span>
-
-    {% endif %}
-
-  </form>
-
-</div>
-
-
-
-<div id="dailyToast" class="fixed bottom-6 right-6 hidden z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all duration-300 translate-y-2 opacity-0"></div>
-
-
-
-{% if excel_rows is not none %}
-
-<div id="dailyEditor" class="bg-white rounded-xl shadow border border-slate-100 overflow-hidden"
-
-     data-run-id="{{ run.id if run else '' }}"
-
-     data-ds-id="{{ active_ds_id or (run.data_source_id if run else '') or (daily_sources[0].id if daily_sources else '') }}">
-
-  <div class="flex flex-wrap items-center justify-between gap-3 px-6 py-4 bg-slate-50 border-b border-slate-100">
-
-    <div class="flex flex-wrap items-center gap-3">
-
-      {% if meta %}
-
-      <span class="text-sm text-slate-600">店铺: <strong>{{ meta.get('店铺名称') }}</strong></span>
-
-      <span class="text-sm text-slate-600">日期: <strong>{{ run.report_date }}</strong></span>
-
-      <span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-xs">#{{ run.id }}</span>
-
-      {% else %}
-
-      <span class="text-sm text-slate-500">字段结构预览 · 生成日报后可填写数值</span>
-
-      {% endif %}
-
-    </div>
-
-    <div class="flex items-center gap-2">
-
-      <button type="button" id="btnAddField" class="btn-secondary">+ 添加字段</button>
-
-      {% if run %}
-
-      <span id="saveStatus" class="text-xs text-slate-400">已同步</span>
-
-      <a href="/daily/{{ run.id }}/export" class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">导出 Excel</a>
-
-      <a href="/daily/{{ run.id }}/export-sku" class="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">导出 SKU 明细</a>
-
-      {% endif %}
-
-    </div>
-
+      <div class="daily-generate-tools mt-3 pt-3 border-t border-slate-200">
+        <div class="ds-tool-field daily-tool-field--date">
+          <label class="ds-field-label">报表日期</label>
+          <div id="reportDatePicker" data-value="{{ run.report_date if run else default_report_date }}"></div>
+        </div>
+        <div class="ds-tool-field">
+          <label class="ds-field-label">导入模板</label>
+          <div class="flex flex-wrap gap-2">
+            <button type="button" id="btnImportTemplate" class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 whitespace-nowrap">下载模板</button>
+          </div>
+        </div>
+        <div class="ds-tool-field">
+          <label class="ds-field-label">刷单数据</label>
+          <div class="flex flex-wrap gap-2">
+            <label class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 cursor-pointer whitespace-nowrap">
+              导入刷单
+              <input type="file" id="reviewImportInput" accept=".xlsx" class="hidden">
+            </label>
+            <label class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 cursor-pointer whitespace-nowrap">
+              导入运费
+              <input type="file" id="reviewLogisticsImportInput" accept=".xlsx" class="hidden">
+            </label>
+          </div>
+          <p id="reviewImportHint" class="ds-tool-hint hidden"></p>
+        </div>
+        <div class="ds-tool-field">
+          <label class="ds-field-label">样品单</label>
+          <div class="flex flex-wrap gap-2">
+            <label class="px-3 py-2 text-sm border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-700 cursor-pointer whitespace-nowrap">
+              导入样品单
+              <input type="file" id="sampleImportInput" accept=".xlsx" class="hidden">
+            </label>
+          </div>
+          <p id="sampleImportHint" class="ds-tool-hint hidden"></p>
+        </div>
+      </div>
+    </form>
   </div>
 
+  {% if run %}
+  <div class="daily-run-strip mb-4">
+    <span class="daily-run-strip-label">当前日报</span>
+    <span class="daily-run-strip-meta">{{ run.report_date }} · #{{ run.id }}</span>
+    <span class="daily-run-strip-hint">可拖动调整列顺序；双击系统计算可恢复为自动值</span>
+  </div>
+  {% endif %}
 
+  {% if excel_rows is not none %}
+  <div id="dailyEditor" class="section-table-card bg-white rounded-xl shadow border border-slate-200 overflow-hidden"
+       data-run-id="{{ run.id if run else '' }}"
+       data-ds-id="{{ active_ds_id }}">
+    <div class="section-table-header">
+      <div class="section-table-header-main">
+        <span class="section-table-title">日报字段</span>
+        <span class="section-table-count">{{ excel_rows|length }}</span>
+      </div>
+      <span class="section-table-hint" title="拖动左侧手柄调整顺序">拖动排序</span>
+    </div>
 
-  <div class="overflow-x-auto">
-
-    <table class="w-full text-sm min-w-[980px] daily-excel-table">
-
-      <thead class="bg-slate-50 text-left text-slate-500 text-xs border-b border-slate-100">
-
-        <tr>
-
-          <th class="px-2 py-3 w-10"></th>
-
-          <th class="px-4 py-3 w-14 font-medium">列</th>
-
-          <th class="px-4 py-3 font-medium">指标名称</th>
-
-          <th class="px-4 py-3 font-medium min-w-[200px]">规则摘要</th>
-
-          {% if run %}<th class="px-4 py-3 w-32 font-medium">系统计算</th>{% endif %}
-
-          {% if run %}<th class="px-4 py-3 w-40 font-medium">报表值</th>{% endif %}
-
-          {% if run %}<th class="px-4 py-3 w-24 font-medium">状态</th>{% endif %}
-
-          <th class="px-4 py-3 w-24 font-medium"></th>
-
-        </tr>
-
-      </thead>
-
-      <tbody id="dailyFieldBody">
-
-        {% for row in excel_rows %}
-
-        {% set m = row.mapping %}
-
-        <tr class="daily-row border-t border-slate-100 transition-colors duration-200
-
-          {% if run and row.is_manual %}daily-row--manual{% elif run and row.is_overridden %}daily-row--overridden{% endif %}
-
-          {% if not row.configured and not row.is_manual %}daily-row--unconfigured{% endif %}"
-
-          draggable="true"
-
-          data-mapping-id="{{ row.mapping_id }}"
-
-          data-value-id="{{ row.value_id or '' }}"
-
-          data-format="{{ row.format_type }}"
-
-          data-manual="{{ '1' if row.is_manual else '0' }}"
-
-          data-computed="{{ row.computed_raw if row.computed_raw is not none else '' }}">
-
-          <td class="px-2 py-3 text-slate-300 cursor-grab active:cursor-grabbing drag-handle" title="拖动排序">⋮⋮</td>
-
-          <td class="px-4 py-3 font-mono text-xs text-slate-500 col-letter">{{ row.col }}</td>
-
-          <td class="px-4 py-3">
-
-            <input type="text" class="field-label w-full max-w-[14rem] font-medium text-slate-800 border border-transparent hover:border-slate-200 focus:border-sky-300 rounded-lg px-2 py-1 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-200" value="{{ row.label }}">
-
-            <div class="text-[10px] font-mono text-slate-400 mt-0.5">{field:{{ row.line_code }}}</div>
-
-          </td>
-
-          <td class="px-4 py-3 text-xs text-slate-600 font-mono max-w-[280px]">
-            {% set ds_id = active_ds_id %}{% set ds_settings_entry = (ds_settings or {}).get(active_ds_id) %}
-            {% include "partials/report_rule_summary.html" %}
-          </td>
-
-          {% if run %}
-
-          <td class="px-4 py-3 font-mono text-sm text-slate-500 computed-cell">
-
-            {% if row.computed_display %}{{ row.computed_display }}{% elif row.is_manual %}<span class="text-slate-300">—</span>{% else %}<span class="text-slate-300">—</span>{% endif %}
-
-          </td>
-
-          <td class="px-4 py-3">
-
-            {% if row.editable and not row.is_manual %}
-
-            <div class="value-editor relative">
-
-              <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 {% if row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
-
-                {{ row.display_value or '—' }}
-
-              </button>
-
-              <input type="text" inputmode="decimal" class="value-input hidden w-full font-mono text-sm px-2 py-1.5 rounded-lg border border-sky-300 focus:ring-2 focus:ring-sky-400 focus:outline-none" value="{{ row.raw_value if row.raw_value is not none else '' }}" placeholder="输入数值">
-
-            </div>
-
-            {% else %}<span class="text-slate-300">—</span>{% endif %}
-
-          </td>
-
-          <td class="px-4 py-3">
-
-            {% if row.is_manual %}
-
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">导出后填</span>
-
-            {% elif row.is_overridden %}
-
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">已调整</span>
-
-            {% elif not row.configured %}
-
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">未配规则</span>
-
-            {% else %}
-
-            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">自动</span>
-
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm min-w-[720px] daily-excel-table app-table">
+        <thead class="bg-slate-50 text-left text-slate-500 text-xs">
+          <tr>
+            <th class="px-1 py-2 w-12" aria-label="拖动排序"></th>
+            <th class="px-4 py-2 w-14">Excel</th>
+            <th class="px-4 py-2 w-16">类型</th>
+            <th class="px-4 py-2">指标名称</th>
+            {% if run %}
+            <th class="px-4 py-2 w-32">系统计算</th>
+            <th class="px-4 py-2 w-40">报表值</th>
+            <th class="px-4 py-2 w-24">状态</th>
             {% endif %}
-
-          </td>
-
-          {% endif %}
-
-          <td class="px-4 py-3">
-            {% set ds_id = active_ds_id %}
-            {% include "partials/report_rule_actions.html" %}
-          </td>
-
-        </tr>
-
-        {% endfor %}
-
-      </tbody>
-
-    </table>
-
+          </tr>
+        </thead>
+        <tbody id="dailyFieldBody">
+          {% for row in excel_rows %}
+          {% set m = row.mapping %}
+          <tr class="daily-row border-t border-slate-100 transition-colors duration-200
+            {% if run and row.is_manual %}daily-row--manual{% elif run and row.is_overridden %}daily-row--overridden{% endif %}
+            {% if not row.configured and not row.is_manual %}daily-row--unconfigured{% endif %}"
+            draggable="true"
+            data-mapping-id="{{ row.mapping_id }}"
+            data-value-id="{{ row.value_id or '' }}"
+            data-format="{{ row.format_type }}"
+            data-manual="{{ '1' if row.is_manual else '0' }}"
+            data-configured="{{ '1' if row.configured else '0' }}"
+            data-computed="{{ row.computed_raw if row.computed_raw is not none else '' }}">
+            <td class="px-1 py-3 text-center">
+              <span class="drag-handle" title="拖动排序" aria-hidden="true">
+                <svg class="drag-handle-icon" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <circle cx="5" cy="4" r="1.35"/>
+                  <circle cx="11" cy="4" r="1.35"/>
+                  <circle cx="5" cy="8" r="1.35"/>
+                  <circle cx="11" cy="8" r="1.35"/>
+                  <circle cx="5" cy="12" r="1.35"/>
+                  <circle cx="11" cy="12" r="1.35"/>
+                </svg>
+              </span>
+            </td>
+            <td class="px-4 py-3 font-mono text-xs text-slate-500 col-letter tabular-nums">{{ row.col }}</td>
+            <td class="px-4 py-3">
+              {% include "partials/field_type_tag.html" %}
+            </td>
+            <td class="px-4 py-3">
+              <input type="text" class="field-label w-full max-w-[14rem] font-medium text-slate-800 border border-transparent hover:border-slate-200 focus:border-sky-300 rounded-lg px-2 py-1 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-sky-200" value="{{ row.label }}">
+              <div class="field-code-hint" title="{field:{{ row.line_code }}}">{field:{{ row.line_code }}}</div>
+            </td>
+            {% if run %}
+            <td class="px-4 py-3 font-mono text-sm text-slate-500 computed-cell tabular-nums">
+              {% if row.computed_display %}{{ row.computed_display }}{% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="px-4 py-3">
+              {% if row.editable and not row.is_manual %}
+              <div class="value-editor relative">
+                <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 tabular-nums {% if row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
+                  {{ row.display_value or '—' }}
+                </button>
+                <input type="text" inputmode="decimal" class="value-input hidden w-full font-mono text-sm px-2 py-1.5 rounded-lg border border-sky-300 focus:ring-2 focus:ring-sky-400 focus:outline-none tabular-nums" value="{{ row.raw_value if row.raw_value is not none else '' }}" placeholder="输入数值">
+              </div>
+              {% else %}<span class="text-slate-300">—</span>{% endif %}
+            </td>
+            <td class="px-4 py-3">
+              {% if row.field_type == 'placeholder' %}
+              <span class="field-type-tag field-type-tag--placeholder row-status-tag">占位</span>
+              {% elif row.is_overridden %}
+              <span class="field-type-tag field-type-tag--warn row-status-tag">已调整</span>
+              {% elif not row.configured %}
+              <span class="field-type-tag field-type-tag--muted row-status-tag">未配规则</span>
+              {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
   </div>
-
-
-
-  <div class="px-6 py-3 bg-slate-50 border-t border-slate-100 text-xs text-slate-500 flex flex-wrap gap-x-4 gap-y-1">
-
-    <span>⋮⋮ 拖动调整列顺序</span>
-
-    <span>点击指标名称可修改</span>
-
-    {% if run %}<span>非手工列可点击报表值编辑；手工列导出 Excel 后由财务填写</span>{% endif %}
-
+  {% elif daily_sources %}
+  <div class="bg-white rounded-xl border border-dashed border-slate-200 p-8 text-center text-slate-400 text-sm">
+    当前店铺暂无日报字段，请前往 <a href="/mappings" class="text-link hover:underline">报表配置</a> 添加。
   </div>
-
-</div>
-
-{% elif daily_sources %}
-
-<p class="text-sm text-slate-500">当前店铺暂无报表字段，请点上方「+ 添加字段」或前往报表配置。</p>
-
+  {% endif %}
+</section>
+{% elif not daily_sources %}
+<p class="text-sm text-red-500">暂无已配置日报的店铺</p>
 {% endif %}
-
-
 
 {% if active_ds_id %}
-
 {% set modal_data_sources = modal_data_sources or daily_sources %}
-
 {% set modal_fields = modal_fields or [] %}
-
 {% include "partials/mapping_modal.html" %}
-
 {% include "partials/review_settings_modal.html" %}
-
+{% include "partials/review_template_download_modal.html" %}
 {% endif %}
-
 {% endblock %}
 
-
-
 {% block scripts %}
-
 {% if active_ds_id %}
-
 <script>window.CURRENT_STORE_DS_ID = {{ active_ds_id | tojson }};</script>
-
 <script>window.DATA_SOURCE_META = {{ meta_json | safe }};</script>
-
 <script>window.DS_SETTINGS = {{ ds_settings_json | safe }};</script>
-
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
-
-<script src="/static/form_controls.js?v=20260708a"></script>
-<script src="/static/mappings_settings.js?v=20260708d"></script>
-<script src="/static/mapping_modal.js?v=20260708c"></script>
-
+<script src="/static/app_toast.js?v=20260708b"></script>
+<script src="/static/app_modal.js?v=20260708a"></script>
+<script src="/static/form_controls.js?v=20260708f"></script>
+<script src="/static/mappings_settings.js?v=20260708k"></script>
+<script src="/static/mapping_modal.js?v=20260708u"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-  const dsSelect = document.querySelector('select[name="data_source_id"]');
-  const tpl = document.getElementById('btnReviewTemplate');
+  const dateRoot = document.getElementById('reportDatePicker');
+  if (dateRoot && window.DateField) {
+    new DateField(dateRoot, {
+      name: 'report_date',
+      value: dateRoot.dataset.value || '',
+      size: 'md',
+    });
+  }
+
   const input = document.getElementById('reviewImportInput');
+  const logisticsInput = document.getElementById('reviewLogisticsImportInput');
+  const sampleInput = document.getElementById('sampleImportInput');
   const hint = document.getElementById('reviewImportHint');
-  const resolveDsId = () => parseInt(dsSelect?.value || '{{ active_ds_id or "" }}', 10);
+  const sampleHint = document.getElementById('sampleImportHint');
+  const resolveDsId = () => parseInt(document.getElementById('dailyDsId')?.value || '{{ active_ds_id or "" }}', 10);
 
-  const updateTpl = () => {
-    const id = resolveDsId();
-    if (tpl && id) tpl.href = `/daily/review-template?data_source_id=${id}`;
+  document.getElementById('btnExportSkuSales')?.addEventListener('click', () => {
+    const dsId = resolveDsId();
+    const reportDate = document.querySelector('input[name="report_date"]')?.value?.trim();
+    if (!dsId) {
+      window.showAppToast?.('请先选择店铺', false);
+      return;
+    }
+    if (!reportDate) {
+      window.showAppToast?.('请先选择报表日期', false);
+      return;
+    }
+    const url = `/daily/export-sku?data_source_id=${encodeURIComponent(dsId)}&report_date=${encodeURIComponent(reportDate)}`;
+    window.location.href = url;
+  });
+
+  const showImportHint = (el, text, ok = true) => {
+    el?.classList.remove('hidden', 'text-red-500', 'text-emerald-700', 'text-slate-500');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add(ok ? 'text-emerald-700' : 'text-red-500');
   };
-  updateTpl();
-  dsSelect?.addEventListener('change', updateTpl);
 
-  input?.addEventListener('change', async () => {
-    const file = input.files?.[0];
+  const runImport = async (file, endpoint, { loadingText, buildSuccess, hintEl = hint }) => {
     if (!file) return;
     const id = resolveDsId();
     if (!id) return;
     const fd = new FormData();
     fd.append('file', file);
-    hint?.classList.remove('hidden');
-    if (hint) hint.textContent = '导入中…';
+    showImportHint(hintEl, loadingText, true);
+    hintEl?.classList.remove('text-emerald-700');
+    hintEl?.classList.add('text-slate-500');
     try {
-      const res = await fetch(`/api/data-sources/${id}/review-orders/import`, { method: 'POST', body: fd });
+      const res = await fetch(`/api/data-sources/${id}/${endpoint}`, { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) {
         const msg = typeof data.detail === 'string' ? data.detail : (data.detail?.errors?.join('；') || '导入失败');
-        if (hint) { hint.textContent = msg; hint.classList.add('text-red-500'); }
+        showImportHint(hintEl, msg, false);
         return;
       }
-      if (hint) {
+      showImportHint(hintEl, `${buildSuccess(data)}，请重新生成日报`, true);
+    } catch (e) {
+      showImportHint(hintEl, e.message || '导入失败', false);
+    }
+  };
+
+  input?.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    await runImport(file, 'review-orders/import', {
+      loadingText: '刷单导入中…',
+      buildSuccess: (data) => {
         const orders = data.review_order_distinct ?? data.imported;
         const logistics = data.review_logistics_total;
         let msg = `已导入 ${data.imported} 行 · ${orders} 个刷单订单`;
-        if (logistics != null) msg += ` · 物流费将计 $${Number(logistics).toFixed(2)}`;
-        hint.textContent = `${msg}，请重新生成日报`;
-        hint.classList.remove('text-red-500');
-        hint.classList.add('text-emerald-600');
-      }
-    } catch (e) {
-      if (hint) hint.textContent = e.message || '导入失败';
-    }
+        if (logistics != null) msg += ` · 物流费约 $${Number(logistics).toFixed(2)}`;
+        return msg;
+      },
+    });
     input.value = '';
+  });
+
+  logisticsInput?.addEventListener('change', async () => {
+    const file = logisticsInput.files?.[0];
+    await runImport(file, 'review-logistics/import', {
+      loadingText: '运费导入中…',
+      buildSuccess: (data) => {
+        const total = data.review_logistics_total;
+        let msg = `已导入 ${data.imported} 行运费`;
+        if (total != null) msg += ` · 合计 $${Number(total).toFixed(2)}`;
+        return msg;
+      },
+    });
+    logisticsInput.value = '';
+  });
+
+  sampleInput?.addEventListener('change', async () => {
+    const file = sampleInput.files?.[0];
+    await runImport(file, 'sample-orders/import', {
+      loadingText: '样品单导入中…',
+      hintEl: sampleHint,
+      buildSuccess: (data) => {
+        const orders = data.sample_order_distinct ?? data.imported;
+        const logistics = data.sample_logistics_total;
+        const cost = data.sample_cost_total;
+        let msg = `已导入 ${data.imported} 行 · ${orders} 个样品订单`;
+        if (logistics != null) msg += ` · 运费 $${Number(logistics).toFixed(2)}`;
+        if (cost != null) msg += ` · 成本 $${Number(cost).toFixed(2)}`;
+        return msg;
+      },
+    });
+    sampleInput.value = '';
+  });
+
+  document.getElementById('btnImportTemplate')?.addEventListener('click', () => {
+    const id = resolveDsId();
+    if (id) window.openReviewTemplateDownloadModal?.(id);
   });
 });
 </script>
-
 {% endif %}
-
 {% if excel_rows is not none %}
-
-<script src="/static/daily_editor.js?v=20260708a"></script>
-
+<script src="/static/daily_editor.js?v=20260708c"></script>
 {% endif %}
-
 {% endblock %}
-
-

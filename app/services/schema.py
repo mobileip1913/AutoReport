@@ -35,6 +35,19 @@ def get_all_meta(db: Session, data_sources: list[DataSource]) -> dict[int, dict]
     return {ds.id: get_data_source_meta(db, ds) for ds in data_sources}
 
 
+def file_labels_from_meta(meta: dict[int, dict]) -> dict[int, dict[str, str]]:
+    """数据源 catalog 关键字 → UI 短名，供规则摘要展示。"""
+    out: dict[int, dict[str, str]] = {}
+    for ds_id, m in meta.items():
+        labels: dict[str, str] = {}
+        for f in m.get("files") or []:
+            kw = (f.get("keyword") or "").strip()
+            if kw:
+                labels[kw] = (f.get("label") or f.get("file_label") or kw).strip()
+        out[int(ds_id)] = labels
+    return out
+
+
 def build_full_schema_snapshot(db: Session, data_source: DataSource) -> dict:
     """从 Catalog 导出 schema JSON（供 scripts/export_schema.py）。"""
     files_out = []

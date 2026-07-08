@@ -65,6 +65,10 @@ def save_ds_config(db: Session, ds: DataSource, patch: dict) -> dict:
         cfg["review_order_ids"] = list(patch["review_order_ids"] or [])
     if "review_orders" in patch:
         cfg["review_orders"] = list(patch["review_orders"] or [])
+    if "sample_orders" in patch:
+        cfg["sample_orders"] = list(patch["sample_orders"] or [])
+    if "sample_order_ids" in patch:
+        cfg["sample_order_ids"] = list(patch["sample_order_ids"] or [])
     ds.config = cfg
     db.commit()
     db.refresh(ds)
@@ -73,8 +77,8 @@ def save_ds_config(db: Session, ds: DataSource, patch: dict) -> dict:
 
 def serialize_ds_settings(ds: DataSource) -> dict:
     from app.services.review_import import (
-        REVIEW_LOGISTICS_MODE_FIXED,
         distinct_review_order_count,
+        review_logistics_mode,
         review_logistics_per_order,
         review_logistics_exclude_same_day_refund,
         review_logistics_rule_summary,
@@ -83,6 +87,7 @@ def serialize_ds_settings(ds: DataSource) -> dict:
     cfg = get_ds_config(ds)
     store = ds.store
     reviews = cfg.get("review_orders") or []
+    samples = cfg.get("sample_orders") or []
     return {
         "data_source_id": ds.id,
         "store_id": store.id if store else None,
@@ -97,9 +102,11 @@ def serialize_ds_settings(ds: DataSource) -> dict:
         "excel_template_file": cfg.get("excel_template_file") or "",
         "review_order_count": len(reviews or cfg.get("review_order_ids") or []),
         "review_order_distinct": distinct_review_order_count(reviews),
-        "review_logistics_mode": REVIEW_LOGISTICS_MODE_FIXED,
+        "review_logistics_mode": review_logistics_mode(cfg),
         "review_logistics_per_order": review_logistics_per_order(cfg),
         "review_logistics_exclude_same_day_refund": review_logistics_exclude_same_day_refund(cfg),
         "review_logistics_rule_summary": review_logistics_rule_summary(cfg),
+        "sample_order_count": len(samples),
+        "sample_order_distinct": len({str(r.get("order_id", "")).strip() for r in samples if r.get("order_id")}),
         "date_master_summary": date_master_summary(cfg),
     }

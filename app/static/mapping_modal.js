@@ -32,17 +32,47 @@ const FILTER_OPS = [
   { v: 'empty', l: '为空' },
 ];
 
-const DEFAULT_JOIN_KEYS = ['Order ID', 'SKU ID'];
+const DEFAULT_JOIN_KEYS = ['Order ID'];
 const DEFAULT_BENCHMARK_KEY = 'Order ID';
 
-let openFilterPartWrap = null;
-const allColumnsCache = {};
-
 let currentMappingId = null;
+const allColumnsCache = {};
 let currentDataSourceId = null;
 let currentLogicalFieldCode = '';
 let parts = [];
 let modalSession = 0;
+/** 取数方式 Tab：fetch(计算) | per_order(每单金额) | placeholder(占位) */
+let activeTab = 'fetch';
+/** 定位叠层：保存父弹窗表单状态，关闭子层时恢复 */
+const mappingContextStack = [];
+
+function mappingOpCycleHtml(combineOp = 'add', extraClass = '') {
+  const isSub = combineOp === 'subtract';
+  const val = isSub ? 'subtract' : 'add';
+  return `<button type="button" class="mapping-op-cycle ${extraClass}" data-value="${val}" title="点击切换加减" aria-label="加减运算">${isSub ? '−' : '+'}</button>`;
+}
+
+function setMappingOpCycle(el, combineOp = 'add') {
+  if (!el) return;
+  const isSub = combineOp === 'subtract';
+  el.dataset.value = isSub ? 'subtract' : 'add';
+  el.textContent = isSub ? '−' : '+';
+}
+
+function readMappingOp(el) {
+  if (!el) return 'add';
+  return el.dataset?.value || el.value || 'add';
+}
+
+function wireMappingOpCycle(el, { onChange } = {}) {
+  if (!el || el.dataset.wired === '1') return;
+  el.dataset.wired = '1';
+  el.addEventListener('click', () => {
+    const next = el.dataset.value === 'subtract' ? 'add' : 'subtract';
+    setMappingOpCycle(el, next);
+    onChange?.(next);
+  });
+}
 
 function findReuseField(code) {
   if (!code) return null;
@@ -52,27 +82,131 @@ function findReuseField(code) {
   return list.find((f) => f.code === code) || null;
 }
 
-function goAuxFieldOnPage(mappingId) {
-  closeModal();
-  setTimeout(() => {
-    const row = document.getElementById(`aux-field-${mappingId}`);
-    if (!row) {
-      toast('请在本页「基础取数字段」区配置', false);
-      return;
+function captureMappingFormState() {
+  return {
+    mappingId: currentMappingId,
+    dataSourceId: currentDataSourceId,
+    logicalFieldCode: currentLogicalFieldCode,
+    title: document.getElementById('modalTitle')?.textContent || '',
+    subtitle: document.getElementById('modalSubtitle')?.textContent || '',
+    label: document.getElementById('mappingLabel')?.value || '',
+    group: document.getElementById('mappingGroup')?.value || '',
+    sort: document.getElementById('mappingSort')?.value || '0',
+    activeTab,
+    perOrderAmount: document.getElementById('perOrderAmount')?.value || '1',
+    perOrderBasis: document.getElementById('perOrderBasis')?.value || 'valid_orders',
+    ratioPercent: document.getElementById('ratioPercent')?.value || '100',
+    ratioBase: ratioBaseSelect?.val() || '',
+    parts: JSON.parse(JSON.stringify(parts)),
+    newMappingHidden: document.getElementById('newMappingFields')?.classList.contains('hidden') ?? true,
+    deleteHidden: document.getElementById('btnDeleteMapping')?.classList.contains('hidden') ?? true,
+  };
+}
+
+async function restoreMappingFormState(state) {
+  const session = ++modalSession;
+  currentMappingId = state.mappingId;
+  currentDataSourceId = state.dataSourceId;
+  currentLogicalFieldCode = state.logicalFieldCode;
+  document.getElementById('modalTitle').textContent = state.title;
+  document.getElementById('modalSubtitle').textContent = state.subtitle;
+  document.getElementById('mappingLabel').value = state.label;
+  document.getElementById('mappingGroup').value = state.group;
+  document.getElementById('mappingSort').value = state.sort;
+  const perOrderInput = document.getElementById('perOrderAmount');
+  if (perOrderInput) perOrderInput.value = state.perOrderAmount || '1';
+  const perOrderBasisSel = document.getElementById('perOrderBasis');
+  if (perOrderBasisSel) perOrderBasisSel.value = state.perOrderBasis || 'valid_orders';
+  const ratioPercentInput = document.getElementById('ratioPercent');
+  if (ratioPercentInput) ratioPercentInput.value = state.ratioPercent || '100';
+  document.getElementById('newMappingFields')?.classList.toggle('hidden', state.newMappingHidden);
+  document.getElementById('btnDeleteMapping')?.classList.toggle('hidden', state.deleteHidden);
+  parts = state.parts;
+  await ensureFiles(currentDataSourceId);
+  await refreshReuseFields();
+  if (session !== modalSession) return;
+  ensureRatioBaseSelect(state.ratioBase || '');
+  setActiveTab(state.activeTab || 'fetch');
+  renderParts();
+  updateNestedChrome();
+  focusMappingModal();
+}
+
+function updateNestedChrome() {
+  const backLink = document.getElementById('modalBackLink');
+  const modal = document.getElementById('mappingModal');
+  const nested = mappingContextStack.length > 0;
+  backLink?.classList.toggle('hidden', !nested);
+  modal?.classList.toggle('mapping-modal--stacked', nested);
+  if (nested && backLink) {
+    const parent = mappingContextStack[mappingContextStack.length - 1];
+    backLink.textContent = `← 返回 ${parent.title}`;
+  }
+}
+
+function setActiveTab(tab) {
+  activeTab = tab || 'fetch';
+  const usesParts = activeTab === 'fetch' || activeTab === 'reuse';
+  document.querySelectorAll('.mapping-tab').forEach((btn) => {
+    btn.classList.toggle('is-active', btn.dataset.tab === activeTab);
+    btn.setAttribute('aria-selected', btn.dataset.tab === activeTab ? 'true' : 'false');
+  });
+  document.querySelectorAll('.mapping-tab-panel').forEach((panel) => {
+    panel.classList.toggle('hidden', panel.dataset.panel !== activeTab);
+  });
+  const region = document.getElementById('partsRegion');
+  if (region) region.classList.toggle('hidden', !usesParts);
+  document.getElementById('btnAddPart')?.classList.toggle('hidden', activeTab !== 'fetch');
+  document.getElementById('btnAddFieldRef')?.classList.toggle('hidden', activeTab !== 'reuse');
+  const title = document.getElementById('partsRegionTitle');
+  const hint = document.getElementById('partsRegionHint');
+  if (title && hint) {
+    if (activeTab === 'reuse') {
+      title.textContent = '复用已配置字段';
+      hint.textContent = '引用同店铺其它字段的值，可多项加减组合';
+    } else {
+      title.textContent = '取数规则';
+      hint.textContent = '支持多来源组与组内多列加减合并';
     }
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    row.classList.add('ring-2', 'ring-sky-400', 'ring-offset-1');
-    setTimeout(() => row.classList.remove('ring-2', 'ring-sky-400', 'ring-offset-1'), 2200);
-  }, 220);
+  }
+  if (activeTab === 'ratio') ensureRatioBaseSelect();
+}
+
+let ratioBaseSelect = null;
+
+function ensureRatioBaseSelect(value) {
+  const host = document.getElementById('ratioBaseHost');
+  if (!host) return;
+  const options = getReuseFieldOptions().map((f) => ({ value: f.code, label: f.name }));
+  const current = value != null ? value : (ratioBaseSelect?.val() || '');
+  if (ratioBaseSelect) ratioBaseSelect.destroy?.();
+  ratioBaseSelect = new SelectField(host, {
+    placeholder: options.length ? '选择基准字段' : '暂无可选字段',
+    options,
+    value: current,
+  });
+}
+
+function focusMappingModal() {
+  const panel = document.getElementById('mappingPanel');
+  const focusable = panel?.querySelector(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+  );
+  focusable?.focus({ preventScroll: true });
+}
+
+async function goAuxFieldOnPage(mappingId) {
+  const modal = document.getElementById('mappingModal');
+  if (!window.AppModal?.isOpen(modal)) {
+    await openModal('edit', mappingId);
+    return;
+  }
+  mappingContextStack.push(captureMappingFormState());
+  await openModal('edit', mappingId, { stacked: true });
 }
 
 function toast(msg, ok = true) {
-  const el = document.getElementById('toast') || document.getElementById('dailyToast');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white ${ok ? 'bg-green-600' : 'bg-red-600'}`;
-  el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 2500);
+  window.showAppToast?.(msg, ok);
 }
 
 function getMeta(dsId) {
@@ -147,7 +281,20 @@ function applyFilterColOpts(blockEl) {
   const cols = blockEl._filterCols || [];
   if (blockEl._dedupColCombo) blockEl._dedupColCombo.setOpts(cols);
   (blockEl._joinKeyCombos || []).forEach((c) => c.setOpts(cols));
-  (blockEl._filterEntries || []).forEach((e) => e.colC?.setOpts(cols));
+}
+
+async function refreshLineFilterCols(lineEl, blockEl) {
+  const st = blockEl._sourceState;
+  const sheet = lineEl._sheetSelect?.val();
+  const cols = [];
+  if (st?.file && sheet) {
+    const sheetCols = await fetchColumns(currentDataSourceId, st.file, sheet);
+    (sheetCols || []).forEach((c) => cols.push(c));
+  }
+  lineEl._filterCols = cols.sort((a, b) => a.localeCompare(b));
+  (lineEl._filterEntries || []).forEach((e) => e.colC?.setOpts(lineEl._filterCols));
+  updateFilterColHint(lineEl, blockEl);
+  return lineEl._filterCols;
 }
 
 async function refreshBlockFilterCols(blockEl) {
@@ -187,9 +334,10 @@ async function loadRowColumns(blockEl, row, sheet, keepCol) {
     row._colCombo.set(keepCol && cols.includes(keepCol) ? keepCol : '');
   }
   refreshBlockFilterCols(blockEl).catch(() => {});
+  refreshLineFilterCols(row, blockEl).catch(() => {});
 }
 
-function wireSourceLine(blockEl, row, { sheet_name: sheetName = '', column_header: col = '' } = {}) {
+function wireSourceLine(blockEl, row, { sheet_name: sheetName = '', column_header: col = '', row_filters = [] } = {}) {
   const st = blockEl._sourceState;
   const sheetHost = row.querySelector('.s-sheet-combo');
   const colHost = row.querySelector('.s-col-combo');
@@ -209,17 +357,24 @@ function wireSourceLine(blockEl, row, { sheet_name: sheetName = '', column_heade
   });
   row._sheetSelect = sheetSelect;
   row._colCombo = colCombo;
+  if (row_filters?.length) {
+    row._rowFilters = [...row_filters];
+  } else if (!row._rowFilters) {
+    row._rowFilters = [];
+  }
 
   row._getSource = () => ({
     source_file_keyword: st.file || null,
     sheet_name: sheetSelect.val(),
     column_header: colCombo.val(),
-    combine_op: row.querySelector('.s-row-op')?.value || 'add',
+    combine_op: readMappingOp(row.querySelector('.s-row-op')),
+    row_filters: collectRowFilters(row),
   });
 
   if (st.file && sheetName) {
     loadRowColumns(blockEl, row, sheetName, col);
   }
+  initRowFilterSection(row, blockEl);
 }
 
 function refreshAllRowSheets(blockEl, { keepCols = true } = {}) {
@@ -228,7 +383,11 @@ function refreshAllRowSheets(blockEl, { keepCols = true } = {}) {
     const prevSheet = keepCols ? row._sheetSelect?.val() : '';
     const prevCol = keepCols ? row._colCombo?.val() : '';
     if (!row._sheetSelect) {
-      wireSourceLine(blockEl, row, { sheet_name: prevSheet, column_header: prevCol });
+      wireSourceLine(blockEl, row, {
+        sheet_name: prevSheet,
+        column_header: prevCol,
+        row_filters: row._rowFilters || [],
+      });
       return;
     }
     row._sheetSelect.setOpts(st.sheets || [], st.sheets?.length ? '请选择 Sheet' : '该文件无 Sheet');
@@ -273,7 +432,9 @@ async function bootstrapBlockSource(blockEl, sources, { blockIdx } = {}) {
     st.sheets = sheets;
     refreshAllRowSheets(blockEl, { keepCols: keepAll });
     await refreshBlockFilterCols(blockEl);
+    await Promise.all([...blockEl.querySelectorAll('.source-line')].map((row) => refreshLineFilterCols(row, blockEl)));
     if (!sheets.length) toast(`「${resolved}」未找到 Sheet`, false);
+    syncBenchmarkVisibility();
   }
 
   blockEl.querySelectorAll('.source-line').forEach((row, i) => {
@@ -281,6 +442,7 @@ async function bootstrapBlockSource(blockEl, sources, { blockIdx } = {}) {
     wireSourceLine(blockEl, row, {
       sheet_name: src.sheet_name || '',
       column_header: src.column_header || '',
+      row_filters: src.row_filters || [],
     });
   });
 
@@ -350,12 +512,14 @@ function flatPartsToBlocks(flatParts) {
 }
 
 function partToSources(part) {
+  const partFilters = part.row_filters || [];
   if (part.sources?.length) {
-    return part.sources.map((s) => ({
+    return part.sources.map((s, i) => ({
       source_file_keyword: s.source_file_keyword || null,
       sheet_name: s.sheet_name || '',
       column_header: s.column_header || '',
       combine_op: s.combine_op || 'add',
+      row_filters: (s.row_filters?.length ? s.row_filters : (i === 0 && partFilters.length ? partFilters : [])),
     }));
   }
   return [{
@@ -363,26 +527,28 @@ function partToSources(part) {
     sheet_name: part.sheet_name || '',
     column_header: part.column_header || '',
     combine_op: 'add',
+    row_filters: partFilters,
   }];
 }
 
 function fieldRefPartTemplate(part, idx) {
   const options = getReuseFieldOptions();
   const wrap = document.createElement('div');
-  wrap.className = 'field-ref-part mapping-part-block border border-teal-200 rounded-xl p-3 bg-teal-50/40';
+  wrap.className = 'field-ref-part mapping-part-block';
   wrap.dataset.idx = idx;
   wrap.dataset.partType = 'field_ref';
   wrap.dataset.combineOp = part.combine_op || 'add';
+  wrap.dataset.benchmarkPreset = (part.benchmark_keys || [])[0] || '';
   wrap._dateMeta = partDateMeta(part);
   wrap.innerHTML = `
     ${idx > 0 ? groupConnectorHtml(part.combine_op || 'add') : ''}
     <div class="flex items-center gap-2 flex-wrap">
-      <span class="text-[11px] font-semibold aux-text shrink-0">复用字段</span>
+      <span class="text-xs font-semibold text-teal-700 shrink-0">复用字段</span>
       <div class="ref-field-select flex-1 min-w-[12rem]"></div>
-      <code class="ref-field-code text-[10px] text-slate-500 font-mono shrink-0"></code>
-      <span class="ref-field-hint text-[10px] text-slate-400 shrink-0">规则在本页「基础取数字段」</span>
-      <button type="button" class="btn-goto-aux text-[11px] text-link shrink-0 hidden">定位 →</button>
-      <button type="button" class="btn-rm-block text-[11px] text-red-500 hover:underline shrink-0 ml-auto">删除</button>
+      <code class="ref-field-code text-xs text-slate-500 font-mono shrink-0"></code>
+      <span class="ref-field-hint text-xs text-slate-400 shrink-0 hidden sm:inline">点击定位可编辑该字段</span>
+      <button type="button" class="btn-goto-aux text-xs text-link shrink-0 hidden">定位</button>
+      <button type="button" class="btn-rm-block text-xs text-red-600 hover:underline shrink-0 ml-auto">删除</button>
     </div>`;
 
   const gotoBtn = wrap.querySelector('.btn-goto-aux');
@@ -390,12 +556,13 @@ function fieldRefPartTemplate(part, idx) {
     placeholder: options.length ? '选择已配置的字段' : '暂无其他已配字段',
     options: options.map((f) => ({
       value: f.code,
-      label: `${f.name}（{field:${f.code}}）`,
+      label: f.name,
     })),
     value: part.ref_field_code || '',
     onChange: (code) => {
       wrap.querySelector('.ref-field-code').textContent = code ? `{field:${code}}` : '';
       syncGotoAuxButton(gotoBtn, code);
+      syncBenchmarkVisibility();
     },
   });
 
@@ -403,7 +570,7 @@ function fieldRefPartTemplate(part, idx) {
     const meta = findReuseField(code);
     if (meta?.mapping_id) {
       btn.classList.remove('hidden');
-      btn.title = meta.configured ? '在本页定位到该字段' : '在本页定位并配置该字段';
+      btn.title = meta.configured ? '打开该字段配置' : '打开并配置该字段';
     } else {
       btn.classList.add('hidden');
     }
@@ -420,14 +587,12 @@ function fieldRefPartTemplate(part, idx) {
   };
 
   const bOp = wrap.querySelector('.b-op');
-  if (bOp) bOp.onchange = () => { wrap.dataset.combineOp = bOp.value; };
+  if (bOp) wireMappingOpCycle(bOp, { onChange: (v) => { wrap.dataset.combineOp = v; } });
 
   wrap.querySelector('.btn-rm-block').onclick = () => {
     wrap.remove();
     reindexParts();
   };
-
-  if (idx > 0) wireBenchmarkCombo(wrap, part).catch(() => {});
 
   wrap._getData = () => {
     const blockIdx = parseInt(wrap.dataset.idx, 10);
@@ -440,7 +605,7 @@ function fieldRefPartTemplate(part, idx) {
       column_header: '',
       sources: [],
       aliases: [],
-      combine_op: blockIdx === 0 ? 'add' : (wrap.querySelector('.b-op')?.value || wrap.dataset.combineOp || 'add'),
+      combine_op: blockIdx === 0 ? 'add' : readMappingOp(wrap.querySelector('.b-op')) || wrap.dataset.combineOp || 'add',
       aggregation: 'sum',
       dedup_keys: [],
       date_filter_column: wrap._dateMeta?.date_filter_column || null,
@@ -475,8 +640,57 @@ async function ensureAllColumns(dsId) {
 }
 
 function readBenchmarkKeys(wrap) {
+  const bench = wrap.querySelector('.group-connector__benchmark');
+  if (bench?.classList.contains('hidden')) return [];
   const key = wrap._benchmarkCombo?.val()?.trim();
   return key ? [key] : [];
+}
+
+function getRefFieldSourceFiles(code) {
+  const meta = findReuseField(code);
+  const files = meta?.source_files || [];
+  return new Set(files.filter(Boolean));
+}
+
+function getBlockSourceFiles(blockEl) {
+  if (!blockEl) return new Set();
+  if (blockEl.dataset.partType === 'field_ref') {
+    const select = blockEl.querySelector('.ref-field-select select');
+    return getRefFieldSourceFiles(select?.value || '');
+  }
+  const files = new Set();
+  const blockFile = blockEl._sourceState?.file;
+  if (blockFile) files.add(blockFile);
+  return files;
+}
+
+function sameSourceFileSet(a, b) {
+  if (!a.size && !b.size) return true;
+  if (!a.size || !b.size) return false;
+  if (a.size !== b.size) return false;
+  return [...a].every((f) => b.has(f));
+}
+
+function blocksShareSameFile(prevEl, currEl) {
+  return sameSourceFileSet(getBlockSourceFiles(prevEl), getBlockSourceFiles(currEl));
+}
+
+function syncBenchmarkVisibility() {
+  const blocks = [...document.querySelectorAll('#partsContainer .mapping-part-block')];
+  blocks.forEach((el, i) => {
+    if (i === 0) return;
+    const bench = el.querySelector(':scope > .group-connector .group-connector__benchmark');
+    if (!bench) return;
+    const need = !blocksShareSameFile(blocks[i - 1], el);
+    bench.classList.toggle('hidden', !need);
+    if (!need) {
+      el._benchmarkCombo?.destroy?.();
+      el._benchmarkCombo = null;
+    } else if (!el._benchmarkCombo) {
+      const preset = el.dataset.benchmarkPreset || DEFAULT_BENCHMARK_KEY;
+      wireBenchmarkCombo(el, { benchmark_keys: preset ? [preset] : [] }).catch(() => {});
+    }
+  });
 }
 
 async function wireBenchmarkCombo(wrap, part = {}) {
@@ -494,74 +708,101 @@ async function wireBenchmarkCombo(wrap, part = {}) {
 }
 
 function groupConnectorHtml(combineOp = 'add') {
-  const isSub = combineOp === 'subtract';
   return `
-    <div class="group-connector flex flex-wrap items-center gap-x-2 gap-y-1.5 mb-2 pb-2 border-b border-dashed border-amber-200/80">
-      <span class="text-[10px] text-amber-700/80 whitespace-nowrap">组间</span>
-      <select class="b-op shrink-0 w-12 border-2 border-amber-300 bg-amber-50 rounded px-1 py-1.5 text-sm font-bold text-amber-800 text-center cursor-pointer" title="与上一项之间的运算">
-        <option value="add" ${!isSub ? 'selected' : ''}>＋</option>
-        <option value="subtract" ${isSub ? 'selected' : ''}>−</option>
-      </select>
-      <span class="text-[10px] text-slate-500 whitespace-nowrap">基准字段</span>
-      <div class="b-benchmark-wrap min-w-[7.5rem] flex-1 max-w-[11rem]"></div>
-      <span class="text-[10px] text-slate-400 whitespace-nowrap">上一项 ⊕ 本项</span>
+    <div class="group-connector">
+      <span class="group-connector__label">组间</span>
+      ${mappingOpCycleHtml(combineOp, 'b-op')}
+      <div class="group-connector__benchmark">
+        <span class="group-connector__label">基准字段</span>
+        <div class="b-benchmark-wrap min-w-[7.5rem] flex-1 max-w-[11rem]"></div>
+      </div>
     </div>`;
 }
 
 function withinGroupOpSelectHtml(combineOp = 'add') {
-  const isSub = combineOp === 'subtract';
-  return `<select class="s-row-op w-full border border-emerald-200 bg-emerald-50 rounded px-0.5 py-1.5 text-xs font-bold text-emerald-800 text-center cursor-pointer" title="与本组前面各列如何合并（组内优先计算）">
-    <option value="add" ${!isSub ? 'selected' : ''}>＋</option>
-    <option value="subtract" ${isSub ? 'selected' : ''}>−</option>
-  </select>`;
+  return mappingOpCycleHtml(combineOp, 's-row-op');
+}
+
+function rowFilterSectionHtml() {
+  return `
+    <details class="row-filter-section row-filter-section--per-col">
+      <summary class="row-filter-summary">
+        <span class="row-filter-summary__label">行筛选</span>
+        <span class="row-filter-summary__preview hidden"></span>
+        <span class="row-filter-summary__count hidden tabular-nums"></span>
+      </summary>
+      <div class="row-filter-body">
+        <p class="filter-panel-desc">本列取数前先按下列条件筛行（全部 AND）</p>
+        <p class="filter-col-hint filter-col-hint--inline hidden"></p>
+        <div class="filter-panel-list"></div>
+        <button type="button" class="btn-add-filter-row text-link text-xs">+ 添加条件</button>
+      </div>
+    </details>`;
+}
+
+function lineFilterScope(lineEl) {
+  return lineEl.closest('.source-line-stack') || lineEl;
 }
 
 function buildSourceLine(blockEl, src, srcIdx) {
+  const stack = document.createElement('div');
+  stack.className = 'source-line-stack';
   const row = document.createElement('div');
-  row.className = `source-line flex items-center gap-2 mb-1.5${srcIdx > 0 ? ' pl-1 border-l-2 border-emerald-200 ml-1' : ''}`;
-  row.innerHTML = `
-    <div class="s-op-wrap shrink-0 w-14 flex items-center justify-center">
-      ${srcIdx === 0
-    ? '<span class="text-[10px] text-slate-400">列</span>'
-    : withinGroupOpSelectHtml(src.combine_op || 'add')}
+  row.className = 'source-cols-row source-line';
+  const isFirst = srcIdx === 0;
+  row.innerHTML = isFirst
+    ? `
+    <div class="source-cols-row__field">
+      <label class="source-field-label">来源</label>
+      <div class="g-block-file"></div>
     </div>
-    <div class="flex-1 min-w-0">
-      <label class="text-[10px] text-slate-500 block mb-0.5">Sheet</label>
+    <div class="source-cols-row__field">
+      <label class="source-field-label">Sheet</label>
       <div class="s-sheet-combo"></div>
     </div>
-    <div class="flex-[1.2] min-w-0">
-      <label class="text-[10px] text-slate-500 block mb-0.5">列头</label>
+    <div class="source-cols-row__field">
+      <label class="source-field-label">列头</label>
       <div class="s-col-combo"></div>
     </div>
-    <button type="button" class="btn-rm-src shrink-0 self-end mb-0.5 w-8 h-8 rounded border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-200 text-sm" title="删除此列">×</button>`;
+    <button type="button" class="btn-rm-src source-cols-row__act" title="删除此列" aria-label="删除此列">×</button>`
+    : `
+    <div class="source-cols-row__field source-cols-row__field--op">
+      <label class="source-field-label source-field-label--ghost">来源</label>
+      <div class="source-cols-row__op-wrap">
+        ${withinGroupOpSelectHtml(src.combine_op || 'add')}
+      </div>
+    </div>
+    <div class="source-cols-row__field">
+      <label class="source-field-label">Sheet</label>
+      <div class="s-sheet-combo"></div>
+    </div>
+    <div class="source-cols-row__field">
+      <label class="source-field-label">列头</label>
+      <div class="s-col-combo"></div>
+    </div>
+    <button type="button" class="btn-rm-src source-cols-row__act" title="删除此列" aria-label="删除此列">×</button>`;
 
+  wireMappingOpCycle(row.querySelector('.s-row-op'));
   row.querySelector('.btn-rm-src').onclick = () => {
     const list = blockEl.querySelector('.sources-list');
     if (list.querySelectorAll('.source-line').length <= 1) {
       toast('每组至少保留一列', false);
       return;
     }
-    row.remove();
+    destroyFilterEntries(row);
+    stack.remove();
     refreshBlockFilterCols(blockEl).catch(() => {});
     reindexSourcesInBlock(blockEl);
   };
-  return row;
+  stack.appendChild(row);
+  stack.insertAdjacentHTML('beforeend', rowFilterSectionHtml());
+  return stack;
 }
 
 function reindexSourcesInBlock(blockEl) {
-    blockEl.querySelectorAll('.source-line').forEach((line, srcIdx) => {
-    const opWrap = line.querySelector('.s-op-wrap');
-    if (!opWrap) return;
-    if (!opWrap) return;
-    const isFirst = srcIdx === 0;
-    const savedOp = line.querySelector('.s-row-op')?.value || 'add';
-    line.classList.toggle('pl-1', !isFirst);
-    line.classList.toggle('border-l-2', !isFirst);
-    line.classList.toggle('border-emerald-200', !isFirst);
-    line.classList.toggle('ml-1', !isFirst);
-    opWrap.innerHTML = isFirst
-      ? '<span class="text-[10px] text-slate-400">列</span>'
-      : withinGroupOpSelectHtml(savedOp);
+  blockEl.querySelectorAll('.source-line').forEach((line, srcIdx) => {
+    if (srcIdx === 0) return;
+    wireMappingOpCycle(line.querySelector('.s-row-op'));
   });
 }
 
@@ -572,69 +813,133 @@ function syncGroupConnectors() {
       conn?.remove();
       return;
     }
-    const op = el.dataset.combineOp || el.querySelector('.b-op')?.value || 'add';
+    const op = el.dataset.combineOp || readMappingOp(el.querySelector('.b-op')) || 'add';
     if (!conn) {
       el.insertAdjacentHTML('afterbegin', groupConnectorHtml(op));
       conn = el.querySelector(':scope > .group-connector');
     }
-    const sel = conn?.querySelector('.b-op');
-    if (sel) {
-      sel.value = op;
-      sel.onchange = () => { el.dataset.combineOp = sel.value; };
+    const btn = conn?.querySelector('.b-op');
+    if (btn) {
+      setMappingOpCycle(btn, op);
+      wireMappingOpCycle(btn, { onChange: (v) => { el.dataset.combineOp = v; } });
     }
   });
+  syncBenchmarkVisibility();
 }
 
-function updateFilterBtnLabel(btn, count) {
-  if (!btn) return;
-  btn.textContent = count > 0 ? `筛选(${count})` : '筛选';
-  btn.classList.toggle('text-sky-700', count > 0);
-  btn.classList.toggle('font-medium', count > 0);
+function filterOpLabel(op) {
+  return FILTER_OPS.find((o) => o.v === op)?.l || op;
 }
 
-function closeAllFilterPanels() {
-  document.querySelectorAll('.part-row .filter-panel').forEach((panel) => {
-    panel.classList.add('hidden');
-    const wrap = panel.closest('.part-row');
-    wrap?.querySelector('.btn-open-filter')?.classList.remove('is-active');
-  });
-  openFilterPartWrap = null;
+function formatFilterPreview(filters) {
+  if (!filters?.length) return '';
+  return filters.map((f) => {
+    const op = filterOpLabel(f.op || 'eq');
+    if (f.op === 'nonempty' || f.op === 'empty') return `${f.column} ${op}`;
+    const vals = (f.values || []).join(', ');
+    return vals ? `${f.column} ${op} ${vals}` : `${f.column} ${op}`;
+  }).join(' · ');
 }
 
-function closeFilterPanel(partWrap) {
-  const panel = partWrap?.querySelector('.filter-panel');
-  panel?.classList.add('hidden');
-  partWrap?.querySelector('.btn-open-filter')?.classList.remove('is-active');
-  if (openFilterPartWrap === partWrap) openFilterPartWrap = null;
+function collectRowFilters(lineEl) {
+  return (lineEl._filterEntries || []).map((e) => e.get()).filter((f) => f.column);
 }
 
-function renderFilterPanel(partWrap) {
-  const list = partWrap.querySelector('.filter-list');
+function updateFilterColHint(lineEl, blockEl) {
+  const scope = lineFilterScope(lineEl);
+  const hint = scope.querySelector('.filter-col-hint--inline');
+  if (!hint) return;
+  const block = blockEl || lineEl.closest('.mapping-part-block');
+  const hasFile = !!block?._sourceState?.file;
+  const hasCols = (lineEl._filterCols || []).length > 0;
+  hint.classList.toggle('hidden', hasFile && hasCols);
+  hint.textContent = !hasFile
+    ? '请先选择上方来源文件，再配置筛选列头。'
+    : '请先选择 Sheet，再配置筛选列头。';
+}
+
+function updateFilterSummary(lineEl, filters) {
+  const scope = lineFilterScope(lineEl);
+  const preview = scope.querySelector('.row-filter-summary__preview');
+  const countEl = scope.querySelector('.row-filter-summary__count');
+  const n = filters?.length || 0;
+  if (preview) {
+    preview.textContent = formatFilterPreview(filters);
+    preview.classList.toggle('hidden', !n);
+  }
+  if (countEl) {
+    countEl.textContent = n ? `${n} 条` : '';
+    countEl.classList.toggle('hidden', !n);
+  }
+}
+
+function commitFilterEntries(lineEl) {
+  const filters = collectRowFilters(lineEl);
+  lineEl._rowFilters = filters;
+  updateFilterSummary(lineEl, filters);
+}
+
+function destroyFilterEntries(lineEl) {
+  (lineEl._filterEntries || []).forEach((e) => e.colC?.destroy?.());
+  lineEl._filterEntries = [];
+}
+
+function renderFilterRows(lineEl) {
+  const scope = lineFilterScope(lineEl);
+  const list = scope.querySelector('.filter-panel-list');
   if (!list) return;
+  destroyFilterEntries(lineEl);
   list.innerHTML = '';
-  partWrap._filterEntries = [];
-  const filters = partWrap._rowFilters || [];
-  if (filters.length === 0) addFilterRow(partWrap);
-  else filters.forEach((f) => addFilterRow(partWrap, f));
+  const filters = lineEl._rowFilters || [];
+  if (filters.length === 0) addFilterRow(lineEl);
+  else filters.forEach((f) => addFilterRow(lineEl, f));
+  commitFilterEntries(lineEl);
 }
 
-function addFilterRow(partWrap, f = {}) {
-  const list = partWrap.querySelector('.filter-list');
+function bindFilterRowEvents(lineEl, entry) {
+  const sync = () => commitFilterEntries(lineEl);
+  entry.el.querySelector('.flt-op')?.addEventListener('change', sync);
+  entry.el.querySelector('.flt-val')?.addEventListener('input', sync);
+  entry.colC.input?.addEventListener('change', sync);
+  const prevPick = entry.colC.onPick;
+  entry.colC.onPick = (v) => {
+    if (prevPick) prevPick(v);
+    sync();
+  };
+}
+
+function addFilterRow(lineEl, f = {}) {
+  const scope = lineFilterScope(lineEl);
+  const list = scope.querySelector('.filter-panel-list');
   if (!list) return;
-  const cols = partWrap._filterCols || [];
+  const cols = lineEl._filterCols || [];
   const row = document.createElement('div');
-  row.className = 'flex gap-1 items-center';
+  row.className = 'filter-row';
   row.innerHTML = `
-    <div class="flt-col flex-1"></div>
-    <select class="flt-op border rounded px-1 py-1 text-[11px]">
-      ${FILTER_OPS.map((o) => `<option value="${o.v}" ${(f.op || 'eq') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
-    </select>
-    <input class="flt-val flex-1 border rounded px-2 py-1 text-[11px]" placeholder="值，多个用逗号；介于填 小,大" value="${(f.values || []).join(', ')}">
-    <button type="button" class="flt-rm text-red-400 text-xs px-1">×</button>`;
-  const colC = new SearchCombo(row.querySelector('.flt-col'), cols, {
+    <div class="filter-row__head">
+      <label class="filter-row__label">列头</label>
+      <div class="filter-row__col"></div>
+    </div>
+    <div class="filter-row__foot">
+      <div class="filter-row__field">
+        <label class="filter-row__label">条件</label>
+        <select class="filter-row__op flt-op form-control">
+          ${FILTER_OPS.map((o) => `<option value="${o.v}" ${(f.op || 'eq') === o.v ? 'selected' : ''}>${o.l}</option>`).join('')}
+        </select>
+      </div>
+      <div class="filter-row__field filter-row__field--val">
+        <label class="filter-row__label">值</label>
+        <input class="filter-row__val flt-val form-control" placeholder="多个用逗号；介于填 小,大" value="${(f.values || []).join(', ')}">
+      </div>
+      <button type="button" class="flt-rm btn-rm-src" aria-label="删除条件">×</button>
+    </div>`;
+  const colC = new SearchCombo(row.querySelector('.filter-row__col'), cols, {
     value: f.column || '',
     placeholder: '搜索列头',
     emptyHint: cols.length ? '无匹配列头' : '请先选择来源文件',
+    size: 'md',
+    inputClass: 'form-control filter-row__col-input font-mono',
+    portal: true,
   });
   const entry = {
     el: row,
@@ -645,108 +950,94 @@ function addFilterRow(partWrap, f = {}) {
       values: row.querySelector('.flt-val').value.split(',').map((s) => s.trim()).filter(Boolean),
     }),
   };
+  bindFilterRowEvents(lineEl, entry);
   row.querySelector('.flt-rm').onclick = () => {
-    const i = (partWrap._filterEntries || []).indexOf(entry);
-    if (i >= 0) partWrap._filterEntries.splice(i, 1);
+    const entries = lineEl._filterEntries || [];
+    if (entries.length <= 1) {
+      colC.set('');
+      row.querySelector('.flt-val').value = '';
+      row.querySelector('.flt-op').value = 'eq';
+      commitFilterEntries(lineEl);
+      return;
+    }
+    const i = entries.indexOf(entry);
+    if (i >= 0) entries.splice(i, 1);
+    entry.colC?.destroy?.();
     row.remove();
+    commitFilterEntries(lineEl);
   };
-  if (!partWrap._filterEntries) partWrap._filterEntries = [];
-  partWrap._filterEntries.push(entry);
+  if (!lineEl._filterEntries) lineEl._filterEntries = [];
+  lineEl._filterEntries.push(entry);
   list.appendChild(row);
 }
 
-function applyFilterPanel(partWrap) {
-  const filters = (partWrap._filterEntries || []).map((e) => e.get()).filter((f) => f.column);
-  partWrap._rowFilters = filters;
-  updateFilterBtnLabel(partWrap.querySelector('.btn-open-filter'), filters.length);
-  closeFilterPanel(partWrap);
-}
+function initRowFilterSection(lineEl, blockEl) {
+  if (lineEl._filterSectionWired) return;
+  lineEl._filterSectionWired = true;
+  const scope = lineFilterScope(lineEl);
+  const section = scope.querySelector('.row-filter-section');
+  if (!section) return;
+  const btnAdd = scope.querySelector('.btn-add-filter-row');
+  lineEl._filterEntries = [];
 
-function toggleFilterPanel(partWrap) {
-  const panel = partWrap.querySelector('.filter-panel');
-  if (!panel) return;
-  const isOpen = !panel.classList.contains('hidden');
-  if (isOpen) {
-    closeFilterPanel(partWrap);
-    return;
-  }
-  closeAllFilterPanels();
-  refreshBlockFilterCols(partWrap).then(() => {
-    const hint = partWrap.querySelector('.filter-col-hint');
-    const hasFile = !!partWrap._sourceState?.file;
-    const hasCols = (partWrap._filterCols || []).length > 0;
-    if (hint) {
-      hint.classList.toggle('hidden', hasFile && hasCols);
-      hint.textContent = !hasFile ? '请先选择上方来源文件，再配置筛选列头。' : '该来源文件暂无可选列头。';
-    }
-    renderFilterPanel(partWrap);
-    panel.classList.remove('hidden');
-    partWrap.querySelector('.btn-open-filter')?.classList.add('is-active');
-    openFilterPartWrap = partWrap;
-  }).catch(() => {
-    renderFilterPanel(partWrap);
-    panel.classList.remove('hidden');
-    partWrap.querySelector('.btn-open-filter')?.classList.add('is-active');
-    openFilterPartWrap = partWrap;
+  const ensureColsAndRender = () => refreshLineFilterCols(lineEl, blockEl).then(() => {
+    if (!lineEl._filterEntries?.length) renderFilterRows(lineEl);
+    else (lineEl._filterEntries || []).forEach((e) => e.colC?.setOpts(lineEl._filterCols || []));
   });
+
+  section.addEventListener('toggle', () => {
+    if (section.open) ensureColsAndRender();
+  });
+
+  btnAdd?.addEventListener('click', () => {
+    refreshLineFilterCols(lineEl, blockEl).then(() => {
+      addFilterRow(lineEl);
+      commitFilterEntries(lineEl);
+    });
+  });
+
+  updateFilterSummary(lineEl, lineEl._rowFilters || []);
+  if ((lineEl._rowFilters || []).length > 0) {
+    section.open = true;
+    ensureColsAndRender();
+  }
 }
 
 function partTemplate(part, idx) {
   const dedupCol = (part.dedup_keys || [])[0] || '';
   const useDedup = partUsesDedup(part);
-  const filterCount = (part.row_filters || []).length;
-  const joinKeys = (part.join_keys && part.join_keys.length) ? part.join_keys : [...DEFAULT_JOIN_KEYS];
+  const joinKeys = (part.join_keys && part.join_keys.length) ? part.join_keys : ['Order ID'];
 
   const wrap = document.createElement('div');
-  wrap.className = 'part-row mapping-part-block border border-slate-200 rounded-xl p-3 bg-slate-50/50';
+  wrap.className = 'part-row mapping-part-block';
   wrap.dataset.idx = idx;
   wrap.dataset.combineOp = part.combine_op || 'add';
+  wrap.dataset.benchmarkPreset = (part.benchmark_keys || [])[0] || '';
   wrap._dateMeta = partDateMeta(part);
   wrap.innerHTML = `
     ${idx > 0 ? groupConnectorHtml(part.combine_op || 'add') : ''}
-    <div class="flex items-baseline gap-2 mb-2">
-      <span class="text-[11px] font-semibold text-slate-600">来源组 <span class="group-title-num">${idx + 1}</span></span>
-      <span class="text-[10px] text-emerald-600/90">① 组内多列按 ＋/− 先合并（同文件各行可选不同 Sheet）</span>
-      <button type="button" class="btn-open-filter ml-auto text-[11px] text-link shrink-0">${filterCount > 0 ? `筛选(${filterCount})` : '筛选'}</button>
-    </div>
-    <div class="group-file-row flex items-center gap-2 mb-2 px-0.5">
-      <label class="text-[10px] text-slate-500 shrink-0 w-20">来源文件</label>
-      <div class="g-block-file flex-1 min-w-0"></div>
+    <div class="mapping-part-block__head">
+      <span class="mapping-part-block__title">来源组 <span class="group-title-num">${idx + 1}</span></span>
     </div>
     <input type="hidden" class="p-agg-stored" value="${part.aggregation || 'sum'}">
-    <div class="sources-list space-y-0"></div>
-    <button type="button" class="btn-add-src mt-1 mb-2 text-[11px] text-link">+ 添加列（组内 ＋/−，可选不同 Sheet）</button>
-    <div class="filter-panel hidden">
-      <div class="filter-panel-head">
-        <span class="filter-panel-title">行筛选条件</span>
-        <button type="button" class="btn-close-filter">收起</button>
-      </div>
-      <p class="filter-panel-desc">全部条件同时满足（AND）才计入本来源组。</p>
-      <p class="filter-col-hint hidden"></p>
-      <div class="filter-list"></div>
-      <div class="filter-panel-foot">
-        <button type="button" class="btn-add-filter text-[11px] text-link">+ 添加条件</button>
-        <button type="button" class="btn-apply-filter text-[11px] btn-primary px-2.5 py-1">确定</button>
-      </div>
-    </div>
-    <div class="mb-2 dedup-section">
-      <label class="inline-flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none">
+    <div class="sources-list"></div>
+    <button type="button" class="btn-add-src mt-1 text-xs text-link">+ 添加列</button>
+    <div class="mb-2 dedup-section mt-2">
+      <label class="inline-flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
         <input type="checkbox" class="p-enable-dedup" ${useDedup ? 'checked' : ''}>
-        <span>去重（按 ID 列去重后求和）</span>
+        <span>去重</span>
       </label>
       <div class="dedup-fields mt-1.5 ${useDedup ? '' : 'hidden'}">
-        <div class="flex items-center gap-2 dedup-line">
-          <div class="flex-[1.2] min-w-0">
-            <span class="text-[10px] text-slate-400">去重键列头（与上行同表）</span>
-            <div class="p-dedup-col-combo"></div>
-          </div>
+        <div class="dedup-line dedup-line--compact">
+          <label class="source-field-label">去重键列头</label>
+          <div class="p-dedup-col-combo"></div>
         </div>
       </div>
     </div>
     <details class="mt-1" ${hasAdvanced(part) ? 'open' : ''}>
-      <summary class="text-[11px] text-link cursor-pointer select-none">高级规则（样品·刷单·当日退单 / 跨表关联）</summary>
-      <div class="mt-2 space-y-2 border-t border-slate-200 pt-2">
-        <div class="flex flex-wrap gap-4 text-[11px] text-slate-600">
+      <summary class="text-xs text-link cursor-pointer select-none">高级规则</summary>
+      <div class="mt-2 space-y-3 border-t border-slate-200 pt-2">
+        <div class="flex flex-wrap gap-4 text-xs text-slate-600">
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-exsample" ${part.exclude_sample ? 'checked' : ''}> 排除样品单</label>
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-exreview" ${part.exclude_review ? 'checked' : ''}> 排除刷单单</label>
           <label class="inline-flex items-center gap-1" title="当日下单且当日退款的订单不计入本组取数">
@@ -755,20 +1046,16 @@ function partTemplate(part, idx) {
           <label class="inline-flex items-center gap-1"><input type="checkbox" class="p-join" ${part.join_to_orders ? 'checked' : ''}> 关联数据主表有效行</label>
         </div>
         <div class="join-keys-section ${part.join_to_orders ? '' : 'hidden'}">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-[10px] text-slate-500">关联匹配键（列头，须与主表对应）</span>
-            <button type="button" class="btn-add-join-key text-[11px] text-link">+ 匹配键</button>
-          </div>
-          <div class="join-keys-list space-y-1"></div>
+          <label class="source-field-label"><span class="field-required-mark" aria-hidden="true">*</span>关联匹配键</label>
+          <div class="join-keys-list"></div>
         </div>
       </div>
     </details>
     <div class="mt-2 flex justify-end">
-      <button type="button" class="btn-rm-block text-[11px] text-red-500 hover:underline">删除本组</button>
+      <button type="button" class="btn-rm-block text-xs text-red-600 hover:underline">删除本组</button>
     </div>`;
 
   const sources = partToSources(part);
-  wrap._rowFilters = [...(part.row_filters || [])];
   wrap._filterCols = [];
 
   const list = wrap.querySelector('.sources-list');
@@ -776,22 +1063,16 @@ function partTemplate(part, idx) {
   bootstrapBlockSource(wrap, sources, { blockIdx: idx });
 
   const bOp = wrap.querySelector('.b-op');
-  if (bOp) {
-    bOp.onchange = () => { wrap.dataset.combineOp = bOp.value; };
-  }
-
-  wrap.querySelector('.btn-open-filter').onclick = () => toggleFilterPanel(wrap);
-  wrap.querySelector('.btn-close-filter').onclick = () => closeFilterPanel(wrap);
-  wrap.querySelector('.btn-add-filter').onclick = () => addFilterRow(wrap);
-  wrap.querySelector('.btn-apply-filter').onclick = () => applyFilterPanel(wrap);
+  if (bOp) wireMappingOpCycle(bOp, { onChange: (v) => { wrap.dataset.combineOp = v; } });
 
   wrap.querySelector('.btn-add-src').onclick = () => {
     const st = wrap._sourceState || {};
     const firstRow = wrap.querySelector('.source-line');
     const defaultSheet = firstRow?._sheetSelect?.val() || st.sheets?.[0] || '';
-    const row = buildSourceLine(wrap, { sheet_name: defaultSheet, column_header: '' }, list.querySelectorAll('.source-line').length);
-    list.appendChild(row);
-    wireSourceLine(wrap, row, { sheet_name: defaultSheet, column_header: '' });
+    const stack = buildSourceLine(wrap, { sheet_name: defaultSheet, column_header: '' }, list.querySelectorAll('.source-line').length);
+    list.appendChild(stack);
+    const row = stack.querySelector('.source-line');
+    wireSourceLine(wrap, row, { sheet_name: defaultSheet, column_header: '', row_filters: [] });
     reindexSourcesInBlock(wrap);
   };
 
@@ -813,30 +1094,48 @@ function partTemplate(part, idx) {
   wrap._joinKeyCombos = [];
 
   function renderJoinKeys(keys) {
+    const normalized = keys.length ? [...keys] : [''];
     joinList.innerHTML = '';
     wrap._joinKeyCombos = [];
-    keys.forEach((keyVal, ki) => {
+    normalized.forEach((keyVal, ki) => {
+      const isFirst = ki === 0;
+      const isLast = ki === normalized.length - 1;
       const line = document.createElement('div');
-      line.className = 'flex gap-1 items-center';
-      line.innerHTML = `<div class="jk-col flex-1"></div><button type="button" class="jk-rm text-red-400 text-xs px-1">×</button>`;
+      line.className = 'join-key-row';
+      line.innerHTML = `
+        <div class="join-key-row__field">
+          <div class="jk-col"></div>
+        </div>
+        <div class="join-key-row__actions">
+          ${!isFirst ? '<button type="button" class="btn-join-key-rm" aria-label="删除匹配键">×</button>' : ''}
+          ${isLast ? '<button type="button" class="btn-join-key-add" aria-label="添加匹配键">+</button>' : ''}
+        </div>`;
       const combo = new SearchCombo(line.querySelector('.jk-col'), wrap._filterCols || [], {
-        value: keyVal, placeholder: '匹配键列头',
+        value: keyVal,
+        placeholder: '如 Order ID',
+        emptyHint: '请先选择来源',
       });
-      line.querySelector('.jk-rm').onclick = () => {
-        keys.splice(ki, 1);
-        renderJoinKeys(keys);
-      };
+      line.querySelector('.btn-join-key-rm')?.addEventListener('click', () => {
+        if (normalized.length <= 1) return;
+        normalized.splice(ki, 1);
+        renderJoinKeys(normalized);
+      });
+      line.querySelector('.btn-join-key-add')?.addEventListener('click', () => {
+        normalized.push('');
+        renderJoinKeys(normalized);
+      });
       wrap._joinKeyCombos.push(combo);
       joinList.appendChild(line);
     });
   }
-  renderJoinKeys([...joinKeys]);
-  joinCb.addEventListener('change', () => joinSection.classList.toggle('hidden', !joinCb.checked));
-  wrap.querySelector('.btn-add-join-key').onclick = () => {
-    const keys = wrap._joinKeyCombos.map((c) => c.val()).filter(Boolean);
-    keys.push('');
-    renderJoinKeys(keys);
-  };
+  renderJoinKeys(part.join_to_orders ? [...joinKeys] : ['Order ID']);
+  joinCb.addEventListener('change', () => {
+    const on = joinCb.checked;
+    joinSection.classList.toggle('hidden', !on);
+    if (on && wrap._joinKeyCombos.every((c) => !c.val())) {
+      renderJoinKeys(['Order ID']);
+    }
+  });
 
   wrap.querySelector('.btn-rm-block').onclick = () => {
     if (document.querySelectorAll('.mapping-part-block').length <= 1) {
@@ -852,8 +1151,6 @@ function partTemplate(part, idx) {
     if (adv && !hasAdvanced(part)) adv.removeAttribute('open');
   }
 
-  if (idx > 0) wireBenchmarkCombo(wrap, part).catch(() => {});
-
   wrap._getData = () => {
     const enableDedup = wrap.querySelector('.p-enable-dedup').checked;
     const dedupCol = enableDedup ? wrap._dedupColCombo?.val() : '';
@@ -864,7 +1161,7 @@ function partTemplate(part, idx) {
     const blockIdx = parseInt(wrap.dataset.idx, 10);
     const joinOn = wrap.querySelector('.p-join').checked;
     const join_keys = joinOn
-      ? wrap._joinKeyCombos.map((c) => c.val()).filter(Boolean)
+      ? wrap._joinKeyCombos.map((c) => (c.val() || '').trim())
       : [];
     return {
       label: null,
@@ -873,7 +1170,7 @@ function partTemplate(part, idx) {
       column_header: first.column_header || '',
       sources,
       aliases: [],
-      combine_op: blockIdx === 0 ? 'add' : (wrap.querySelector('.b-op')?.value || wrap.dataset.combineOp || 'add'),
+      combine_op: blockIdx === 0 ? 'add' : readMappingOp(wrap.querySelector('.b-op')) || wrap.dataset.combineOp || 'add',
       aggregation: enableDedup ? inferAggregation(stored, dedup_keys) : 'sum',
       dedup_keys,
       date_filter_column: wrap._dateMeta?.date_filter_column || null,
@@ -882,9 +1179,9 @@ function partTemplate(part, idx) {
       exclude_review: wrap.querySelector('.p-exreview').checked,
       exclude_same_day_refund: wrap.querySelector('.p-exsame-day-refund')?.checked || false,
       join_to_orders: joinOn,
-      join_keys: join_keys.length ? join_keys : (joinOn ? [...DEFAULT_JOIN_KEYS] : []),
+      join_keys: joinOn ? join_keys : [],
       benchmark_keys: readBenchmarkKeys(wrap),
-      row_filters: (wrap._rowFilters || []).filter((f) => f.column),
+      row_filters: [],
     };
   };
 
@@ -943,18 +1240,29 @@ function renderParts() {
   syncGroupConnectors();
 }
 
-async function openModal(mode, mappingId = null) {
+async function openModal(mode, mappingId = null, opts = {}) {
   const session = ++modalSession;
   currentMappingId = mappingId;
   const modal = document.getElementById('mappingModal');
+  const alreadyOpen = window.AppModal?.isOpen(modal);
   document.getElementById('newMappingFields').classList.toggle('hidden', mode !== 'create');
   document.getElementById('btnDeleteMapping').classList.toggle('hidden', mode !== 'edit');
 
-  // 先弹出壳子，数据异步加载，避免长时间无反馈
-  openWithTransition(modal);
+  if (!alreadyOpen) {
+    openWithTransition(modal);
+  } else if (opts.stacked) {
+    const panel = document.getElementById('mappingPanel');
+    panel?.classList.add('is-nested-enter');
+    setTimeout(() => panel?.classList.remove('is-nested-enter'), 240);
+  }
   const partsContainer = document.getElementById('partsContainer');
   if (partsContainer) {
-    partsContainer.innerHTML = '<p class="text-sm text-slate-500 py-8 text-center">加载配置中…</p>';
+    partsContainer.innerHTML = `
+      <div class="modal-loading" aria-busy="true">
+        <div class="modal-loading__bar"></div>
+        <div class="modal-loading__bar modal-loading__bar--short"></div>
+        <p class="text-xs text-slate-500 mt-4">加载配置中…</p>
+      </div>`;
   }
 
   try {
@@ -965,15 +1273,23 @@ async function openModal(mode, mappingId = null) {
       }
       currentDataSourceId = parseInt(dsSelect?.value || '0', 10);
       currentLogicalFieldCode = '';
-      document.getElementById('modalTitle').textContent = '新增取数行';
+      document.getElementById('modalTitle').textContent = '新增日报字段';
       document.getElementById('modalSubtitle').textContent = '配置多条取数规则，支持跨文件加减组合';
       document.getElementById('mappingLabel').value = '';
       document.getElementById('mappingGroup').value = '';
       document.getElementById('mappingSort').value = '0';
-      document.getElementById('mappingDesc').value = '';
+      const perOrderInputNew = document.getElementById('perOrderAmount');
+      if (perOrderInputNew) perOrderInputNew.value = '1';
+      const perOrderBasisNew = document.getElementById('perOrderBasis');
+      if (perOrderBasisNew) perOrderBasisNew.value = 'valid_orders';
+      const ratioPercentNew = document.getElementById('ratioPercent');
+      if (ratioPercentNew) ratioPercentNew.value = '100';
       parts = [{ type: 'source', combine_op: 'add', aggregation: 'sum', dedup_keys: [], aliases: [] }];
       await ensureFiles(currentDataSourceId);
       await refreshReuseFields();
+      if (session !== modalSession) return;
+      ensureRatioBaseSelect('');
+      setActiveTab('placeholder');
     } else {
       const res = await fetch(`/api/mappings/${mappingId}`);
       if (!res.ok) throw new Error('加载映射失败');
@@ -981,42 +1297,76 @@ async function openModal(mode, mappingId = null) {
       if (session !== modalSession) return;
       currentDataSourceId = data.data_source_id;
       currentLogicalFieldCode = data.logical_field_code || '';
-      document.getElementById('modalTitle').textContent = data.label || data.logical_field_name || '配置取数行';
-      document.getElementById('modalSubtitle').textContent = `{field:${data.line_code || data.logical_field_code}}`;
+      document.getElementById('modalTitle').textContent = data.label || data.logical_field_name || '配置日报字段';
+      document.getElementById('modalSubtitle').textContent = '';
       document.getElementById('mappingLabel').value = data.label || data.logical_field_name || '';
       document.getElementById('mappingGroup').value = data.report_group || '';
       document.getElementById('mappingSort').value = String(data.sort_order || 0);
-      document.getElementById('mappingDesc').value = data.description || '';
+      const perOrderInputEdit = document.getElementById('perOrderAmount');
+      if (perOrderInputEdit) {
+        perOrderInputEdit.value = data.per_order_amount != null ? String(data.per_order_amount) : '1';
+      }
+      const perOrderBasisEdit = document.getElementById('perOrderBasis');
+      if (perOrderBasisEdit) perOrderBasisEdit.value = data.per_order_basis || 'valid_orders';
+      const ratioPercentEdit = document.getElementById('ratioPercent');
+      if (ratioPercentEdit) ratioPercentEdit.value = data.ratio_percent != null ? String(data.ratio_percent) : '100';
+      const lineType = (data.line_type || '').toLowerCase();
+      const hasParts = data.parts.length > 0;
+      const allRef = hasParts && data.parts.every((p) => p.ref_field_code);
+      let editTab = 'placeholder';
+      if (lineType === 'per_order') editTab = 'per_order';
+      else if (lineType === 'ratio') editTab = 'ratio';
+      else if (lineType === 'manual') editTab = 'placeholder';
+      else if (allRef) editTab = 'reuse';
+      else if (hasParts) editTab = 'fetch';
       parts = flatPartsToBlocks(data.parts.length ? data.parts : [{ combine_op: 'add', aggregation: 'sum', dedup_keys: [] }]);
       await ensureFiles(currentDataSourceId);
       await refreshReuseFields();
+      if (session !== modalSession) return;
+      ensureRatioBaseSelect(data.ratio_base_code || '');
+      setActiveTab(editTab);
     }
     if (session !== modalSession) return;
     renderParts();
+    updateNestedChrome();
+    if (!alreadyOpen || opts.stacked) focusMappingModal();
   } catch (err) {
     if (session !== modalSession) return;
     toast(err.message || '打开配置失败', false);
-    closeModal();
+    if (opts.stacked && mappingContextStack.length) {
+      restoreMappingFormState(mappingContextStack.pop()).catch(() => {});
+    } else if (!mappingContextStack.length) {
+      closeModal();
+    }
   }
 }
 
 function openWithTransition(modal) {
-  const panel = document.getElementById('mappingPanel');
-  modal.classList.remove('hidden');
-  requestAnimationFrame(() => {
-    modal.classList.remove('opacity-0');
-    if (panel) panel.classList.remove('scale-95');
-  });
+  window.AppModal?.open(modal);
 }
 
 function closeModal() {
+  if (mappingContextStack.length) {
+    modalSession += 1;
+    const state = mappingContextStack.pop();
+    restoreMappingFormState(state).catch(() => {});
+    return;
+  }
   modalSession += 1;
-  closeAllFilterPanels();
+  mappingContextStack.length = 0;
   const modal = document.getElementById('mappingModal');
-  const panel = document.getElementById('mappingPanel');
-  modal.classList.add('opacity-0');
-  if (panel) panel.classList.add('scale-95');
-  setTimeout(() => modal.classList.add('hidden'), 200);
+  modal?.classList.remove('mapping-modal--stacked');
+  window.AppModal?.close(modal);
+}
+
+function bindMappingModal(modal) {
+  modal.querySelectorAll('[data-modal-close]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      closeModal();
+    });
+  });
+  modal.querySelector('.app-modal__backdrop')?.addEventListener('click', () => closeModal());
 }
 
 function collectParts() {
@@ -1024,21 +1374,56 @@ function collectParts() {
 }
 
 async function saveMapping() {
+  const lineTypeByTab = {
+    placeholder: 'manual',
+    per_order: 'per_order',
+    ratio: 'ratio',
+    fetch: 'fetch',
+    reuse: 'fetch',
+  };
   const body = {
     label: document.getElementById('mappingLabel')?.value.trim() || null,
     report_group: document.getElementById('mappingGroup')?.value.trim() || null,
     sort_order: parseInt(document.getElementById('mappingSort')?.value, 10) || 0,
-    line_type: 'fetch',
-    description: document.getElementById('mappingDesc').value.trim() || null,
-    parts: collectParts(),
+    line_type: lineTypeByTab[activeTab] || 'fetch',
+    parts: [],
   };
-  if (!body.parts.length || body.parts.some((p) => {
-    if (p.ref_field_code) return !p.ref_field_code;
-    const srcs = p.sources?.length ? p.sources : [{ sheet_name: p.sheet_name, column_header: p.column_header }];
-    return srcs.some((s) => !s.sheet_name || !s.column_header);
-  })) {
-    toast('请完整配置取数规则，或选择要复用的字段', false);
-    return;
+
+  if (activeTab === 'per_order') {
+    const amt = parseFloat(document.getElementById('perOrderAmount')?.value);
+    if (!(amt >= 0)) {
+      toast('请填写每单金额（≥ 0）', false);
+      return;
+    }
+    body.per_order_amount = amt;
+    body.per_order_basis = document.getElementById('perOrderBasis')?.value || 'valid_orders';
+  } else if (activeTab === 'ratio') {
+    const base = ratioBaseSelect?.val() || '';
+    const pct = parseFloat(document.getElementById('ratioPercent')?.value);
+    if (!base) {
+      toast('请选择按比例的基准字段', false);
+      return;
+    }
+    if (!(pct >= 0)) {
+      toast('请填写比例（≥ 0）', false);
+      return;
+    }
+    body.ratio_base_code = base;
+    body.ratio_percent = pct;
+  } else if (activeTab === 'placeholder') {
+    // 占位无其它配置
+  } else {
+    body.parts = collectParts();
+    if (!body.parts.length || body.parts.some((p) => {
+      if (p.ref_field_code) return !p.ref_field_code;
+      const srcs = p.sources?.length ? p.sources : [{ sheet_name: p.sheet_name, column_header: p.column_header }];
+      if (srcs.some((s) => !s.sheet_name || !s.column_header)) return true;
+      if (p.join_to_orders && (!p.join_keys?.length || p.join_keys.some((k) => !k))) return true;
+      return false;
+    })) {
+      toast('请完整配置取数规则（含关联匹配键），或选择要复用的字段', false);
+      return;
+    }
   }
 
   let url = '/api/mappings';
@@ -1056,13 +1441,29 @@ async function saveMapping() {
   const data = await res.json();
   if (!res.ok) return toast(data.detail || '保存失败', false);
   await refreshReuseFields();
+  if (mappingContextStack.length) {
+    const state = mappingContextStack.pop();
+    await restoreMappingFormState(state);
+    toast('保存成功');
+    return;
+  }
   closeModal();
   toast('保存成功');
   setTimeout(() => location.reload(), 600);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', closeModal));
+  const mappingModal = document.getElementById('mappingModal');
+  if (mappingModal) bindMappingModal(mappingModal);
+  document.getElementById('modalBackLink')?.addEventListener('click', () => closeModal());
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modal = document.getElementById('mappingModal');
+    if (!window.AppModal?.isOpen(modal) || !mappingContextStack.length) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closeModal();
+  }, true);
   document.getElementById('btnNewMapping')?.addEventListener('click', () => {
     openModal('create').catch(() => {});
   });
@@ -1070,6 +1471,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = e.target.closest('.btn-edit');
     if (!btn || btn.closest('#formulaModal')) return;
     openModal('edit', parseInt(btn.dataset.id, 10)).catch(() => {});
+  });
+  document.querySelectorAll('.mapping-tab').forEach((btn) => {
+    btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
   });
   document.getElementById('btnAddPart')?.addEventListener('click', addPartRow);
   document.getElementById('btnAddFieldRef')?.addEventListener('click', () => {
@@ -1079,7 +1483,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btnDeleteMapping')?.addEventListener('click', async () => {
     if (!confirm('确定删除？')) return;
     const res = await fetch(`/api/mappings/${currentMappingId}`, { method: 'DELETE' });
-    if (res.ok) { toast('已删除'); closeModal(); setTimeout(() => location.reload(), 600); }
+    if (!res.ok) return;
+    toast('已删除');
+    await refreshReuseFields();
+    if (mappingContextStack.length) {
+      const state = mappingContextStack.pop();
+      await restoreMappingFormState(state);
+      return;
+    }
+    closeModal();
+    setTimeout(() => location.reload(), 600);
   });
   document.getElementById('newDataSource')?.addEventListener('change', (e) => {
     currentDataSourceId = parseInt(e.target.value, 10);

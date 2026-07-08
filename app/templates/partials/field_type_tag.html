@@ -1,0 +1,18 @@
+{# 日报字段类型标签（报表配置 / 日报输出共用） #}
+{% if row.field_type == 'compute' %}
+<span class="field-type-tag field-type-tag--compute">计算</span>
+{% elif row.field_type == 'formula' %}
+<span class="field-type-tag field-type-tag--formula">公式</span>
+{% elif row.field_type == 'review' %}
+<span class="field-type-tag field-type-tag--review">刷单</span>
+{% elif row.field_type == 'sample' %}
+<span class="field-type-tag field-type-tag--sample">样品</span>
+{% elif row.field_type == 'placeholder' %}
+<span class="field-type-tag field-type-tag--placeholder">占位</span>
+{% elif row.field_type == 'per_order' %}
+<span class="field-type-tag field-type-tag--per-order">每单</span>
+{% elif row.field_type == 'ratio' %}
+<span class="field-type-tag field-type-tag--ratio">比例</span>
+{% else %}
+<span class="field-type-tag field-type-tag--fetch">取数</span>
+{% endif %}

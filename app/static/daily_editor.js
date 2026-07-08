@@ -26,16 +26,7 @@
   }
 
   function toast(msg, ok = true) {
-    const toastEl = document.getElementById('dailyToast');
-    if (!toastEl) return;
-    toastEl.textContent = msg;
-    toastEl.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all duration-300 ${ok ? 'bg-emerald-600' : 'bg-red-600'}`;
-    toastEl.classList.remove('hidden', 'opacity-0', 'translate-y-2');
-    clearTimeout(toast._t);
-    toast._t = setTimeout(() => {
-      toastEl.classList.add('opacity-0', 'translate-y-2');
-      setTimeout(() => toastEl.classList.add('hidden'), 280);
-    }, 2200);
+    window.showAppToast?.(msg, ok);
   }
 
   function setStatus(text, tone = 'muted') {
@@ -117,33 +108,6 @@
     toast('名称已保存');
   }
 
-  document.getElementById('btnAddField')?.addEventListener('click', async () => {
-    const dsId = requireDsId();
-    if (!dsId) return;
-    const name = prompt('新字段名称', '新指标');
-    if (!name?.trim()) return;
-    setStatus('添加中…', 'busy');
-    try {
-      const res = await fetch(`/api/data-sources/${dsId}/report-fields`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          label: name.trim(),
-          run_id: runId ? parseInt(runId, 10) : null,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || '添加失败');
-      toast('字段已添加，请配置取数规则');
-      sessionStorage.setItem('openMappingId', String(data.id));
-      location.reload();
-    } catch (err) {
-      toast(err.message, false);
-    } finally {
-      setStatus('已同步', 'ok');
-    }
-  });
-
   tbody.querySelectorAll('.field-label').forEach((input) => {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') input.blur();
@@ -175,14 +139,25 @@
 
   function updateRowUI(row, data) {
     const displayBtn = row.querySelector('.value-display');
-    const statusTag = row.querySelector('.status-tag');
+    const statusTag = row.querySelector('.row-status-tag');
     const isManual = row.dataset.manual === '1';
     if (displayBtn && !isManual) {
       displayBtn.textContent = data.display_value || '—';
+      displayBtn.classList.toggle('text-amber-900', !!data.is_overridden);
+      displayBtn.classList.toggle('text-slate-800', !!data.display_value && !data.is_overridden);
+      displayBtn.classList.toggle('text-slate-300', !data.display_value && !data.is_overridden);
     }
     row.classList.toggle('daily-row--overridden', !!data.is_overridden);
-    if (statusTag && !isManual && data.is_overridden) {
-      statusTag.textContent = '已调整';
+    if (statusTag && !isManual) {
+      if (data.is_overridden) {
+        statusTag.textContent = '已调整';
+        statusTag.className = 'field-type-tag field-type-tag--warn row-status-tag';
+      } else if (row.dataset.configured === '0') {
+        statusTag.textContent = '未配规则';
+        statusTag.className = 'field-type-tag field-type-tag--muted row-status-tag';
+      } else {
+        statusTag.remove();
+      }
     }
   }
 
@@ -236,6 +211,7 @@
       row.querySelector('.computed-cell')?.addEventListener('dblclick', () => {
         saveValue(row, { clear_override: true }).catch((e) => toast(e.message, false));
       });
+      row.querySelector('.computed-cell')?.setAttribute('title', '双击恢复为系统计算值');
     });
   }
 

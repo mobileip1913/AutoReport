@@ -1,10 +1,2 @@
-{# 报表字段操作按钮（报表配置 / 日报输出共用） #}
-{% if row.is_manual %}
-<span class="text-slate-400 text-xs">—</span>
-{% elif row.line_code in review_import_codes %}
-<button type="button" class="btn-review-settings text-link hover:underline text-xs" data-ds-id="{{ ds_id }}">刷单设置</button>
-{% elif row.is_formula %}
+{# 报表字段操作按钮（报表配置 / 日报输出共用）：统一为「配置」，打开统一弹窗 #}
 <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
-{% else %}
-<button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
-{% endif %}

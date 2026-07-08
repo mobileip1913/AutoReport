@@ -21,7 +21,7 @@ from app.services.seed import ensure_meichong_datasource
 from app.services.scheduler import refresh_schedules, shutdown_scheduler, start_scheduler
 from app.models import DataSource, FieldMapping
 
-app = FastAPI(title="AutoReport Demo", description="跨境电商自动报表 Demo")
+app = FastAPI(title="AutoReport", description="跨境电商自动报表")
 
 static_dir = Path("app/static")
 static_dir.mkdir(parents=True, exist_ok=True)

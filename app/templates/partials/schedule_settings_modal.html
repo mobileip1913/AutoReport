@@ -1,0 +1,42 @@
+<!-- 每日自动生成时间设置弹窗 -->
+<div id="scheduleSettingsModal"
+  class="app-modal hidden opacity-0"
+  role="dialog"
+  aria-modal="true"
+  aria-labelledby="scheduleSettingsTitle"
+  aria-hidden="true">
+  <div class="app-modal__backdrop" data-close-schedule-settings data-modal-close></div>
+  <div id="scheduleSettingsPanel" class="app-modal__panel app-modal__panel--narrow app-modal__panel--schedule">
+    <header class="app-modal__header">
+      <div class="app-modal__header-main">
+        <h2 id="scheduleSettingsTitle" class="app-modal__title">每日自动生成</h2>
+        <p class="app-modal__subtitle">Asia/Shanghai 时区；未设置则不自动生成</p>
+      </div>
+      <button type="button" class="app-modal__close" data-close-schedule-settings data-modal-close aria-label="关闭">&times;</button>
+    </header>
+    <div class="app-modal__body">
+      <div class="flex items-center justify-between gap-2 mb-3">
+        <label class="modal-field-label mb-0">生成时间</label>
+        <button type="button" class="ds-time-inline-clear text-xs text-link">清除</button>
+      </div>
+      <p class="ds-time-inline-value text-lg font-mono font-semibold tabular-nums text-slate-800 mb-4">未设置</p>
+      <div class="ds-time-inline">
+        <div class="ds-time-section">
+          <div class="ds-time-section-title">小时</div>
+          <div class="ds-time-grid ds-time-hour-grid"></div>
+        </div>
+        <div class="ds-time-section">
+          <div class="ds-time-section-title">分钟</div>
+          <div class="ds-time-grid ds-time-min-grid"></div>
+        </div>
+      </div>
+      <input type="hidden" class="ds-daily-time" value="">
+    </div>
+    <footer class="app-modal__footer app-modal__footer--end">
+      <div class="app-modal__footer-actions">
+        <button type="button" class="btn-modal-cancel" data-close-schedule-settings data-modal-close>取消</button>
+        <button type="button" class="btn-save-schedule-settings btn-primary">保存</button>
+      </div>
+    </footer>
+  </div>
+</div>

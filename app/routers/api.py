@@ -15,6 +15,7 @@ from app.services.mapping_utils import (
     is_manual_line,
     mapping_label,
     mapping_line_code,
+    mapping_source_file_keywords,
     slug_line_code,
 )
 from app.services.report_engine import generate_report, generate_report_for_data_source
@@ -34,6 +35,7 @@ class MappingSourceIn(BaseModel):
     sheet_name: str
     column_header: str
     combine_op: str = "add"
+    row_filters: list[RowFilterIn] = Field(default_factory=list)
 
 
 class MappingPartIn(BaseModel):
@@ -62,13 +64,17 @@ class MappingPartIn(BaseModel):
 class MappingSave(BaseModel):
     label: str | None = None
     line_code: str | None = None
-    line_type: str = "fetch"
+    line_type: str = "fetch"  # fetch(计算) | per_order(每单金额) | manual(占位)
     report_group: str | None = None
     sort_order: int | None = None
     expression: str | None = None
     format_type: str | None = None
     is_highlight: bool = False
     description: str | None = None
+    per_order_amount: float | None = None
+    per_order_basis: str | None = None
+    ratio_percent: float | None = None
+    ratio_base_code: str | None = None
     parts: list[MappingPartIn] = Field(default_factory=list)
 
 
@@ -110,6 +116,10 @@ def _serialize_mapping(m: FieldMapping) -> dict:
         "format_type": m.format_type or "usd",
         "is_highlight": bool(m.is_highlight),
         "description": m.description,
+        "per_order_amount": m.per_order_amount,
+        "per_order_basis": m.per_order_basis or "valid_orders",
+        "ratio_percent": m.ratio_percent,
+        "ratio_base_code": m.ratio_base_code,
         "parts": [
             {
                 "id": p.id,
@@ -304,6 +314,7 @@ def data_source_mapped_fields(
             "name": mapping_label(m),
             "mapping_id": m.id,
             "configured": bool(m.parts or (m.sheet_name and m.column_header)),
+            "source_files": mapping_source_file_keywords(m),
         })
     return {"data_source_id": data_source_id, "fields": fields}
 
@@ -346,6 +357,49 @@ def get_mapping(mapping_id: int, request: Request, db: Session = Depends(get_db)
     return _serialize_mapping(mapping)
 
 
+def _clear_special_fields(mapping: FieldMapping):
+    mapping.per_order_amount = None
+    mapping.per_order_basis = None
+    mapping.ratio_percent = None
+    mapping.ratio_base_code = None
+
+
+def _apply_fetch_kind(mapping: FieldMapping, body: MappingSave, db: Session):
+    """按取数方式落库：per_order(每单金额) | ratio(按比例) | manual(占位) | fetch(计算/复用)。"""
+    kind = (body.line_type or "fetch").lower()
+    if kind == "per_order":
+        if body.per_order_amount is None:
+            raise HTTPException(status_code=400, detail="请填写每单金额")
+        _clear_special_fields(mapping)
+        mapping.line_type = "per_order"
+        mapping.per_order_amount = max(0.0, float(body.per_order_amount))
+        mapping.per_order_basis = (
+            "review_orders" if (body.per_order_basis or "").strip() == "review_orders" else "valid_orders"
+        )
+        _apply_parts(mapping, [], db)
+    elif kind == "ratio":
+        base = (body.ratio_base_code or "").strip()
+        if not base:
+            raise HTTPException(status_code=400, detail="请选择按比例的基准字段")
+        if body.ratio_percent is None:
+            raise HTTPException(status_code=400, detail="请填写比例")
+        _clear_special_fields(mapping)
+        mapping.line_type = "ratio"
+        mapping.ratio_base_code = base
+        mapping.ratio_percent = float(body.ratio_percent)
+        _apply_parts(mapping, [], db)
+    elif kind == "manual":
+        _clear_special_fields(mapping)
+        mapping.line_type = "manual"
+        _apply_parts(mapping, [], db)
+    else:
+        if not body.parts:
+            raise HTTPException(status_code=400, detail="至少配置一条取数规则")
+        _clear_special_fields(mapping)
+        mapping.line_type = "fetch"
+        _apply_parts(mapping, body.parts, db)
+
+
 @router.put("/mappings/{mapping_id}")
 def save_mapping(mapping_id: int, body: MappingSave, request: Request, db: Session = Depends(get_db)):
     mapping = db.query(FieldMapping).filter(FieldMapping.id == mapping_id).first()
@@ -354,11 +408,8 @@ def save_mapping(mapping_id: int, body: MappingSave, request: Request, db: Sessi
     assert_mapping_access(request, db, mapping)
     if is_formula_line(mapping) or (body.line_type or "").lower() == "formula":
         raise HTTPException(status_code=400, detail="公式行请使用 /api/formula-lines 接口")
-    if not body.parts:
-        raise HTTPException(status_code=400, detail="至少配置一条取数规则")
     _apply_report_fields(mapping, body, db, mapping.data_source_id)
-    mapping.line_type = "fetch"
-    _apply_parts(mapping, body.parts, db)
+    _apply_fetch_kind(mapping, body, db)
     db.commit()
     db.refresh(mapping)
     return _serialize_mapping(mapping)
@@ -369,8 +420,6 @@ def create_mapping_api(body: MappingCreateFull, request: Request, db: Session = 
     assert_data_source_access(request, db, body.data_source_id)
     if (body.line_type or "fetch").lower() == "formula":
         raise HTTPException(status_code=400, detail="公式行请使用 POST /api/formula-lines")
-    if not body.parts:
-        raise HTTPException(status_code=400, detail="至少配置一条取数规则")
 
     line_code = (body.line_code or "").strip()
     if not line_code and body.logical_field_id:
@@ -396,7 +445,7 @@ def create_mapping_api(body: MappingCreateFull, request: Request, db: Session = 
     db.add(mapping)
     db.flush()
     _apply_report_fields(mapping, body, db, body.data_source_id)
-    _apply_parts(mapping, body.parts, db)
+    _apply_fetch_kind(mapping, body, db)
     db.commit()
     db.refresh(mapping)
     return _serialize_mapping(mapping)
@@ -784,6 +833,72 @@ async def import_review_orders_api(
         raise HTTPException(status_code=404, detail="数据源不存在")
     content = await file.read()
     result = import_review_orders(db, ds, content, strict=True)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail="; ".join(result.get("errors", ["导入失败"])))
+    return result
+
+
+@router.get("/data-sources/{data_source_id}/review-logistics/template")
+def download_review_logistics_template(data_source_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services.review_import import build_review_logistics_template_bytes
+
+    assert_data_source_access(request, db, data_source_id)
+    content = build_review_logistics_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="review_logistics_template.xlsx"'},
+    )
+
+
+@router.post("/data-sources/{data_source_id}/review-logistics/import")
+async def import_review_logistics_api(
+    data_source_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    from app.services.review_import import import_review_logistics
+
+    assert_data_source_access(request, db, data_source_id)
+    ds = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    content = await file.read()
+    result = import_review_logistics(db, ds, content, strict=True)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail="; ".join(result.get("errors", ["导入失败"])))
+    return result
+
+
+@router.get("/data-sources/{data_source_id}/sample-orders/template")
+def download_sample_template(data_source_id: int, request: Request, db: Session = Depends(get_db)):
+    from app.services.sample_import import build_sample_template_bytes
+
+    assert_data_source_access(request, db, data_source_id)
+    content = build_sample_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="sample_orders_template.xlsx"'},
+    )
+
+
+@router.post("/data-sources/{data_source_id}/sample-orders/import")
+async def import_sample_orders_api(
+    data_source_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    from app.services.sample_import import import_sample_orders
+
+    assert_data_source_access(request, db, data_source_id)
+    ds = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    content = await file.read()
+    result = import_sample_orders(db, ds, content, strict=True)
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail="; ".join(result.get("errors", ["导入失败"])))
     return result

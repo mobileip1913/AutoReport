@@ -65,7 +65,7 @@ LOGICAL_FIELDS = [
     ("mc_review_amount", "刷单金额", "待导入刷单表"),
     ("mc_review_commission", "刷单佣金", "待导入刷单表"),
     ("mc_review_service_fee", "刷单服务费", "待导入刷单表"),
-    ("mc_review_logistics", "刷单物流费用", "待导入刷单表"),
+    ("mc_review_logistics", "刷单物流费用", "刷单设置 · 每单固定金额 × 不重复 Order ID 数"),
     ("mc_review_cost", "刷单成本", "待导入刷单表"),
     ("mc_sample_logistics", "样品单运费", "待定=空"),
     ("mc_sample_cost", "样品单成本", "待定=空"),
@@ -216,14 +216,30 @@ MAPPINGS: dict[str, tuple[str, list[dict]]] = {
     ),
 }
 
-# 尚无对应 Excel / Catalog 文件的占位指标（报表行保留，出报=0）
-PENDING_FILE_CODES = {
-    "mc_sample_cost",
+# 尚无对应 Excel / Catalog 文件的占位指标（报表行保留，出报=0 或日报页手填）
+PENDING_FILE_CODES = frozenset({
+    "mc_ad_spend",
     "mc_logistics_fee",
     "mc_product_cost",
     "mc_fixed_cost",
     "mc_frame_return",
-}
+})
+
+# 刷单 Excel / 设置导入
+REVIEW_EXCEL_IMPORT_CODES = frozenset({
+    "mc_review_amount",
+    "mc_review_commission",
+    "mc_review_service_fee",
+    "mc_review_cost",
+})
+REVIEW_LOGISTICS_CODES = frozenset({"mc_review_logistics"})
+REVIEW_IMPORT_CODES = REVIEW_EXCEL_IMPORT_CODES | REVIEW_LOGISTICS_CODES
+
+# 样品单 Excel 导入
+SAMPLE_IMPORT_CODES = frozenset({
+    "mc_sample_logistics",
+    "mc_sample_cost",
+})
 
 
 # 导出 Excel 后由财务手工填写的行（系统不算数、单元格留空）

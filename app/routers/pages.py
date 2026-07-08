@@ -7,8 +7,6 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import (
-    Account,
-    AccountStore,
     DataImport,
     DataSource,
     FieldMapping,
@@ -20,68 +18,28 @@ from app.models import (
     TemplateLine,
     TemplateStatus,
 )
-from app.services.account_context import (
-    ACCOUNT_COOKIE,
-    STORE_COOKIE,
-    assert_data_source_access,
-    page_context,
-    stores_for_account,
-)
-from app.services.mapping_utils import part_rule_hints
+from app.services.account_context import assert_data_source_access, page_context
+from app.services.mapping_utils import part_rule_brief, part_rule_hints, build_field_labels_map
 from app.services.report_engine import generate_report, generate_report_for_data_source
-from app.services.schema import get_all_meta
+from app.services.schema import file_labels_from_meta, get_all_meta
 from app.services.timezone import to_cst
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 templates.env.filters["cst"] = to_cst
 templates.env.filters["part_rule_hints"] = part_rule_hints
+templates.env.filters["part_rule_brief"] = part_rule_brief
 
 
 def _render(name: str, request: Request, db: Session, **ctx):
-    return templates.TemplateResponse(name, {"request": request, **page_context(request, db), **ctx})
-
-
-@router.post("/demo/switch-account")
-def switch_demo_account(
-    account_id: int = Form(...),
-    next_url: str = Form("/mappings"),
-    db: Session = Depends(get_db),
-):
-    account = db.query(Account).filter(Account.id == account_id).first()
-    if not account:
-        raise HTTPException(status_code=404, detail="账号不存在")
-    stores = stores_for_account(db, account.id)
-    target = next_url if next_url.startswith("/") else "/mappings"
-    resp = RedirectResponse(url=target, status_code=303)
-    resp.set_cookie(ACCOUNT_COOKIE, str(account.id), max_age=60 * 60 * 24 * 30)
-    if stores:
-        resp.set_cookie(STORE_COOKIE, str(stores[0].id), max_age=60 * 60 * 24 * 30)
-    return resp
-
-
-@router.post("/demo/switch-store")
-def switch_demo_store(
-    request: Request,
-    store_id: int = Form(...),
-    next_url: str = Form("/mappings"),
-    db: Session = Depends(get_db),
-):
-    from app.services.account_context import resolve_current_account
-
-    account = resolve_current_account(request, db)
-    store = (
-        db.query(Store)
-        .join(AccountStore, AccountStore.store_id == Store.id)
-        .filter(Store.id == store_id, AccountStore.account_id == account.id)
-        .first()
+    defaults = {
+        "file_labels_by_ds": {},
+        "field_labels_by_ds": {},
+    }
+    return templates.TemplateResponse(
+        name,
+        {"request": request, **defaults, **page_context(request, db), **ctx},
     )
-    if not store:
-        raise HTTPException(status_code=403, detail="当前账号无权访问该店铺")
-    target = next_url if next_url.startswith("/") else "/mappings"
-    resp = RedirectResponse(url=target, status_code=303)
-    resp.set_cookie(STORE_COOKIE, str(store.id), max_age=60 * 60 * 24 * 30)
-    return resp
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -140,7 +98,7 @@ def unpublish_template(template_id: int, db: Session = Depends(get_db)):
 
 @router.get("/mappings", response_class=HTMLResponse)
 def list_mappings(request: Request, db: Session = Depends(get_db)):
-    from app.services.mapping_utils import is_formula_line, is_manual_line, mapping_label, mapping_line_code
+    from app.services.mapping_utils import is_formula_line, is_manual_line, mapping_label, mapping_line_code, mapping_source_file_keywords, field_display_type
     from app.services.meichong_rules import PENDING_FILE_CODES
 
     from sqlalchemy.orm import joinedload
@@ -148,7 +106,10 @@ def list_mappings(request: Request, db: Session = Depends(get_db)):
     ctx = page_context(request, db)
     current_store = ctx["current_store"]
     accessible_stores = ctx["accessible_stores"]
-    data_sources = [current_store.data_source] if current_store else ctx["accessible_data_sources"]
+    if current_store and current_store.data_source:
+        data_sources = [current_store.data_source]
+    else:
+        data_sources = list(ctx["accessible_data_sources"])
     if data_sources:
         ds_ids = [ds.id for ds in data_sources]
         data_sources = (
@@ -167,6 +128,14 @@ def list_mappings(request: Request, db: Session = Depends(get_db)):
     )
     fields = db.query(LogicalField).all()
     meta = get_all_meta(db, data_sources)
+    file_labels_by_ds = file_labels_from_meta(meta)
+    field_labels_by_ds = {
+        ds.id: build_field_labels_map(
+            [m for m in mappings if m.data_source_id == ds.id],
+            fields,
+        )
+        for ds in data_sources
+    }
     reuse_fields: dict[int, list[dict]] = {}
     for ds in data_sources:
         reuse_fields[ds.id] = [
@@ -175,6 +144,7 @@ def list_mappings(request: Request, db: Session = Depends(get_db)):
                 "name": mapping_label(m),
                 "mapping_id": m.id,
                 "configured": bool(m.parts or (m.sheet_name and m.column_header)),
+                "source_files": mapping_source_file_keywords(m),
             }
             for m in mappings
             if m.data_source_id == ds.id and not is_formula_line(m) and not is_manual_line(m)
@@ -191,6 +161,7 @@ def list_mappings(request: Request, db: Session = Depends(get_db)):
             "is_manual": is_manual_line(m),
             "label": mapping_label(m),
             "line_code": mapping_line_code(m),
+            "field_type": field_display_type(m, mapping_line_code(m)),
         }
         if (m.sort_order or 0) <= 0 and not m.report_group:
             auxiliary.setdefault(m.data_source_id, []).append(item)
@@ -235,6 +206,8 @@ def list_mappings(request: Request, db: Session = Depends(get_db)):
         excel_templates=excel_templates,
         modal_stores=accessible_stores,
         meta_json=json.dumps(meta, ensure_ascii=False),
+        file_labels_by_ds=file_labels_by_ds,
+        field_labels_by_ds=field_labels_by_ds,
         reuse_fields_json=json.dumps(reuse_fields, ensure_ascii=False),
         pending_file_codes=PENDING_FILE_CODES,
         ds_settings_json=json.dumps({
@@ -268,11 +241,16 @@ def daily_report_page(
 ):
     from app.services.daily_report import build_dynamic_report_rows, report_meta
     from app.services.ds_settings import serialize_ds_settings
-    from app.services.mapping_utils import is_formula_line, is_manual_line, mapping_label, mapping_line_code
+    from app.services.mapping_utils import is_formula_line, is_manual_line, mapping_label, mapping_line_code, mapping_source_file_keywords, field_display_type, build_field_labels_map
     from app.services.meichong_rules import MEICHONG_TEMPLATE_NAME, PENDING_FILE_CODES
     from app.services.schema import get_all_meta
 
     ctx = page_context(request, db)
+    current_store = ctx.get("current_store")
+    accessible_stores = ctx.get("accessible_stores") or []
+    store_by_ds_id = {
+        s.data_source_id: s for s in accessible_stores if s.data_source_id
+    }
     daily_sources = [ds for ds in ctx["accessible_data_sources"] if ds.config]
 
     template = (
@@ -293,6 +271,8 @@ def daily_report_page(
 
     if run:
         active_ds_id = run.data_source_id or _run_source_id(db, run)
+    elif current_store and current_store.data_source_id:
+        active_ds_id = current_store.data_source_id
     elif daily_sources:
         active_ds_id = daily_sources[0].id
 
@@ -344,10 +324,24 @@ def daily_report_page(
         )
 
     ds_settings = {}
+    file_labels_by_ds = {}
     if active_ds_id and ds:
         ds_settings = {ds.id: serialize_ds_settings(ds)}
+        file_labels_by_ds = file_labels_from_meta(get_all_meta(db, [ds]))
     elif daily_sources:
         ds_settings = {d.id: serialize_ds_settings(d) for d in daily_sources}
+        file_labels_by_ds = file_labels_from_meta(get_all_meta(db, daily_sources))
+
+    field_labels_by_ds = {}
+    if active_ds_id and mappings:
+        field_labels_by_ds[active_ds_id] = build_field_labels_map(mappings, modal_fields)
+
+    from datetime import date, timedelta
+
+    default_report_date = (
+        run.report_date if run
+        else (date.today() - timedelta(days=1)).isoformat()
+    )
 
     return _render(
         "daily.html",
@@ -355,11 +349,17 @@ def daily_report_page(
         db,
         template=template,
         daily_sources=daily_sources,
+        accessible_stores=accessible_stores,
+        current_store=current_store,
+        store_by_ds_id=store_by_ds_id,
         run=run,
         excel_rows=excel_rows,
         meta=meta,
         active_ds_id=active_ds_id,
+        default_report_date=default_report_date,
         meta_json=meta_json,
+        file_labels_by_ds=file_labels_by_ds,
+        field_labels_by_ds=field_labels_by_ds,
         reuse_fields_json=reuse_fields_json,
         modal_data_sources=modal_data_sources,
         modal_fields=modal_fields,
@@ -424,6 +424,66 @@ def daily_review_template(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": 'attachment; filename="review_orders_template.xlsx"'},
+    )
+
+
+@router.get("/daily/review-logistics-template")
+def daily_review_logistics_template(
+    request: Request,
+    data_source_id: int,
+    db: Session = Depends(get_db),
+):
+    from app.services.review_import import build_review_logistics_template_bytes
+
+    assert_data_source_access(request, db, data_source_id)
+    content = build_review_logistics_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="review_logistics_template.xlsx"'},
+    )
+
+
+@router.get("/daily/sample-template")
+def daily_sample_template(
+    request: Request,
+    data_source_id: int,
+    db: Session = Depends(get_db),
+):
+    from app.services.sample_import import build_sample_template_bytes
+
+    assert_data_source_access(request, db, data_source_id)
+    content = build_sample_template_bytes()
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="sample_orders_template.xlsx"'},
+    )
+
+
+@router.get("/daily/export-sku")
+def daily_export_sku_by_date(
+    request: Request,
+    data_source_id: int,
+    report_date: str,
+    db: Session = Depends(get_db),
+):
+    from app.services.sku_export import export_sku_excel
+
+    assert_data_source_access(request, db, data_source_id)
+    ds = db.query(DataSource).filter(DataSource.id == data_source_id).first()
+    if not ds:
+        raise HTTPException(status_code=404, detail="数据源不存在")
+    date_str = (report_date or "").strip()
+    if not date_str:
+        raise HTTPException(status_code=400, detail="请选择报表日期")
+
+    store_name = (ds.config or {}).get("meta", {}).get("店铺名称") or ds.name
+    path = export_sku_excel(db, ds, date_str, store_name)
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=path.name,
     )
 
 

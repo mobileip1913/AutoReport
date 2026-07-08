@@ -1,10 +1,5 @@
 function toastFormula(msg, ok = true) {
-  const el = document.getElementById('toast');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = `fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white ${ok ? 'bg-green-600' : 'bg-red-600'}`;
-  el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 2500);
+  window.showAppToast?.(msg, ok);
 }
 
 function renderFieldPicker(dsId) {
@@ -15,7 +10,7 @@ function renderFieldPicker(dsId) {
   fields.forEach((f) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-teal-100 text-slate-600 font-mono';
+    btn.className = 'text-xs px-2 py-0.5 rounded bg-slate-100 hover:bg-teal-100 text-slate-600 font-mono';
     btn.textContent = `{field:${f.code}}`;
     btn.title = f.name;
     btn.onclick = () => {

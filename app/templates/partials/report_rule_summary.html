@@ -1,34 +1,54 @@
 {# 报表字段规则摘要（报表配置 / 日报输出共用） #}
-{% if row.is_manual %}
-<span class="rule-summary-text">财务导出 Excel 后填写</span>
-{% elif row.is_formula %}
-<span class="rule-type-tag rule-type-tag--formula">公式</span>
-<span class="rule-summary-text rule-summary-mono">{{ m.expression or '公式行' }}</span>
-{% elif row.line_code in review_import_codes %}
-<span class="rule-type-tag rule-type-tag--review">刷单</span>
-{% if row.line_code == 'mc_review_logistics' %}
-<span class="rule-summary-text review-logistics-rule-summary" data-ds-id="{{ ds_id }}">店铺刷单规则 · {{ ds_settings_entry.review_logistics_rule_summary if ds_settings_entry else '按单固定 $1/单' }}</span>
+
+{% set fl = (file_labels_by_ds|default({})).get(ds_id, {}) %}
+{% set fn = (field_labels_by_ds|default({})).get(ds_id, {}) %}
+{% if row.field_type == 'placeholder' %}
+
+<span class="rule-summary-text">占位，导出后手工填写或上传文件</span>
+
+{% elif row.field_type == 'per_order' %}
+
+<span class="rule-summary-text">每单 ${{ '%g' % (m.per_order_amount or 0) }} × {% if m.per_order_basis == 'review_orders' %}刷单单数{% else %}当日有效订单数{% endif %}</span>
+
+{% elif row.field_type == 'ratio' %}
+
+<span class="rule-summary-text">{{ fn.get(m.ratio_base_code, m.ratio_base_code or '基准字段') }} × {{ '%g' % (m.ratio_percent or 0) }}%</span>
+
+{% elif row.field_type == 'formula' %}
+
+<span class="rule-summary-text">{{ (m.expression or '公式行')[:48] }}{% if m.expression and m.expression|length > 48 %}…{% endif %}</span>
+
+{% elif row.field_type == 'review' or row.line_code in review_import_codes %}
+
+{% if row.line_code in review_logistics_codes %}
+
+<span class="rule-summary-text review-logistics-rule-summary" data-ds-id="{{ ds_id }}">{{ ds_settings_entry.review_logistics_rule_summary if ds_settings_entry else '按单固定 $1/单' }}</span>
+
 {% else %}
-<span class="rule-summary-text">刷单清单导入汇总</span>
+
+<span class="rule-summary-text">刷单 Excel 导入汇总</span>
+
 {% endif %}
+
+{% elif row.field_type == 'sample' %}
+
+<span class="rule-summary-text">样品单 Excel 导入汇总</span>
+
 {% elif m.parts %}
+
   {% for p in m.parts|sort(attribute='sort_order') %}
+
   <div class="rule-summary-line">
-    {% if p.ref_field_code %}
-    <span class="rule-summary-mono">{% if not loop.first and p.combine_op == 'subtract' %}− {% elif not loop.first %}＋ {% endif %}[复用 {field:{{ p.ref_field_code }}}]</span>
-    {% elif p.sources and p.sources|length > 1 %}
-      {% for s in p.sources %}<span class="rule-summary-mono">{% if loop.index > 1 %}+ {% endif %}{% if s.source_file_keyword %}[{{ s.source_file_keyword }}]{% endif %}{{ s.sheet_name }}.{{ s.column_header }}</span>{% endfor %}
-    {% else %}
-    <span class="rule-summary-mono">{% if p.source_file_keyword %}[{{ p.source_file_keyword }}]{% endif %}{{ p.sheet_name }}.{{ p.column_header }}</span>
-    {% endif %}
-    {% if not p.ref_field_code %}<span class="rule-summary-meta">({{ p.aggregation }})</span>{% endif %}
-    {% for hint in p | part_rule_hints %}
-    <span class="rule-summary-hint">· {{ hint }}</span>
-    {% endfor %}
+
+    <span class="rule-summary-text">{% if not loop.first and p.combine_op == 'subtract' %}− {% elif not loop.first %}＋ {% endif %}{{ p | part_rule_brief(fl, fn) }}</span>
+
   </div>
+
   {% endfor %}
-{% elif row.pending_file %}
-<span class="rule-summary-text">预留占位，手动输入或上传文件</span>
+
 {% else %}
+
 <span class="rule-summary-empty">未配置取数</span>
+
 {% endif %}
+

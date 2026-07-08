@@ -78,6 +78,10 @@ def _ensure_field_mapping_report_columns():
         return
     with engine.begin() as conn:
         _add_column_if_missing(conn, "field_mappings", "line_type", "VARCHAR(10)")
+        _add_column_if_missing(conn, "field_mappings", "per_order_amount", "FLOAT")
+        _add_column_if_missing(conn, "field_mappings", "per_order_basis", "VARCHAR(20)")
+        _add_column_if_missing(conn, "field_mappings", "ratio_percent", "FLOAT")
+        _add_column_if_missing(conn, "field_mappings", "ratio_base_code", "VARCHAR(50)")
         _add_column_if_missing(conn, "field_mappings", "label", "VARCHAR(100)")
         _add_column_if_missing(conn, "field_mappings", "line_code", "VARCHAR(50)")
         _add_column_if_missing(conn, "field_mappings", "report_group", "VARCHAR(100)")
