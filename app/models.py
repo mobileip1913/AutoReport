@@ -64,6 +64,9 @@ class Store(Base):
     name = Column(String(100), nullable=False)
     platform = Column(String(50), nullable=False)
     data_source_id = Column(ForeignKey("data_sources.id"), unique=True, nullable=False)
+    # 生产库店铺标识（eb_overseas_tk_* 表按 store_id / shop_code 过滤）
+    production_store_id = Column(Integer, nullable=True, index=True)
+    shop_code = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     data_source = relationship("DataSource", back_populates="store")
@@ -164,6 +167,8 @@ class EtlBatch(Base):
     id = Column(Integer, primary_key=True)
     data_source_id = Column(ForeignKey("data_sources.id"), index=True)
     store_name = Column(String(100), nullable=False)
+    # 对应生产库 excel_order_id（导出批次外键）
+    excel_order_id = Column(Integer, nullable=True, index=True)
     source_desc = Column(String(255), nullable=True)
     row_counts = Column(JSON, default=dict)
     status = Column(String(20), default="success")

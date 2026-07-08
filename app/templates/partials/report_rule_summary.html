@@ -1,7 +1,6 @@
 {# 报表字段规则摘要（报表配置 / 日报输出共用） #}
 {% if row.is_manual %}
-<span class="rule-type-tag rule-type-tag--manual">手工</span>
-<span class="rule-summary-text">财务在<a href="/daily" class="text-link hover:underline">日报输出</a>页填写</span>
+<span class="rule-summary-text">财务导出 Excel 后填写</span>
 {% elif row.is_formula %}
 <span class="rule-type-tag rule-type-tag--formula">公式</span>
 <span class="rule-summary-text rule-summary-mono">{{ m.expression or '公式行' }}</span>

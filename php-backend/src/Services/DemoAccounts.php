@@ -7,61 +7,76 @@ namespace App\Services;
 use App\Database;
 
 /**
- * Demo 账号 / 店铺种子：报表配置按店铺隔离，账号可绑定多店铺。
+ * Demo 账号 / 店铺种子：仅保留美宠真实店铺。
  * 与 Python 版 services/demo_accounts.py 对等。
  */
 final class DemoAccounts
 {
-    public const DEMO_STORE_B_NAME = '美宠Demo-欧洲区店铺';
-    public const DEMO_STORE_B_SOURCE = '美宠-欧洲区Demo店铺(TK-EU)';
+    private const LEGACY_DEMO_STORE_B_SOURCE = '美宠-欧洲区Demo店铺(TK-EU)';
 
     /** [login_name, display_name, store_names[]] */
     private static function demoAccounts(): array
     {
         return [
             ['zhang', '张财务', [Seed::MEICHONG_STORE]],
-            ['li', '李运营', [self::DEMO_STORE_B_NAME]],
-            ['wang', '王主管', [Seed::MEICHONG_STORE, self::DEMO_STORE_B_NAME]],
+            ['li', '李运营', [Seed::MEICHONG_STORE]],
+            ['wang', '王主管', [Seed::MEICHONG_STORE]],
         ];
     }
 
-    private static function ensureStoreBDatasource(array $srcDs): array
+    private static function removeLegacyDemoStoreB(): void
     {
-        $existing = Database::fetchOne('SELECT * FROM data_sources WHERE name = ?', [self::DEMO_STORE_B_SOURCE]);
-        if ($existing) {
-            return $existing;
+        $ds = Database::fetchOne('SELECT * FROM data_sources WHERE name = ?', [self::LEGACY_DEMO_STORE_B_SOURCE]);
+        if (!$ds) {
+            return;
+        }
+        $dsId = (int) $ds['id'];
+
+        $mappings = Database::fetchAll('SELECT id FROM field_mappings WHERE data_source_id = ?', [$dsId]);
+        foreach ($mappings as $m) {
+            $mid = (int) $m['id'];
+            Database::execute('UPDATE report_values SET mapping_id = NULL WHERE mapping_id = ?', [$mid]);
+            Database::execute('DELETE FROM field_mapping_parts WHERE mapping_id = ?', [$mid]);
+            Database::execute('DELETE FROM field_mappings WHERE id = ?', [$mid]);
         }
 
-        $cfg = MeichongRules::meichongConfig();
-        $cfg['meta'] = array_merge($cfg['meta'] ?? [], [
-            '项目' => '美宠',
-            '平台' => 'TikTok',
-            '区域' => '欧洲',
-            '店铺名称' => self::DEMO_STORE_B_NAME,
-        ]);
-        $dsId = Database::insert('data_sources', [
-            'name' => self::DEMO_STORE_B_SOURCE,
-            'platform' => 'TikTok Shop',
-            'description' => 'Demo 第二店铺：欧洲区独立报表配置（Catalog/映射从美宠美区克隆，便于对比权限）',
-            'config' => Database::jsonEncode($cfg),
-            'created_at' => Database::utcNow(),
-        ]);
-
-        StoreClone::cloneCatalog((int) $srcDs['id'], $dsId);
-        StoreClone::cloneFieldMappings((int) $srcDs['id'], $dsId);
-
-        // 标记差异：欧区店铺用不同指标名，便于 Demo 区分
-        $payLine = Database::fetchOne(
-            'SELECT * FROM field_mappings WHERE data_source_id = ? AND label = ?',
-            [$dsId, '应支付金额']
-        );
-        if ($payLine) {
-            Database::updateById('field_mappings', (int) $payLine['id'], [
-                'label' => '应支付金额(欧区口径)',
-                'description' => 'Demo：欧区店铺独立报表配置',
-            ]);
+        $runs = Database::fetchAll('SELECT id FROM report_runs WHERE data_source_id = ?', [$dsId]);
+        foreach ($runs as $run) {
+            $rid = (int) $run['id'];
+            Database::execute('DELETE FROM report_values WHERE report_run_id = ?', [$rid]);
+            Database::execute('DELETE FROM report_runs WHERE id = ?', [$rid]);
         }
-        return Database::fetchOne('SELECT * FROM data_sources WHERE id = ?', [$dsId]);
+
+        $files = Database::fetchAll('SELECT id FROM catalog_files WHERE data_source_id = ?', [$dsId]);
+        foreach ($files as $file) {
+            $fid = (int) $file['id'];
+            $sheets = Database::fetchAll('SELECT id FROM catalog_sheets WHERE file_id = ?', [$fid]);
+            foreach ($sheets as $sheet) {
+                $sid = (int) $sheet['id'];
+                Database::execute('DELETE FROM catalog_columns WHERE sheet_id = ?', [$sid]);
+                Database::execute('DELETE FROM catalog_sheets WHERE id = ?', [$sid]);
+            }
+            Database::execute('DELETE FROM catalog_files WHERE id = ?', [$fid]);
+        }
+
+        Database::execute('DELETE FROM etl_batches WHERE data_source_id = ?', [$dsId]);
+
+        $imports = Database::fetchAll('SELECT id FROM data_imports WHERE data_source_id = ?', [$dsId]);
+        foreach ($imports as $imp) {
+            $iid = (int) $imp['id'];
+            Database::execute('DELETE FROM data_rows WHERE data_import_id = ?', [$iid]);
+            Database::execute('DELETE FROM mapping_logs WHERE data_import_id = ?', [$iid]);
+            Database::execute('DELETE FROM data_imports WHERE id = ?', [$iid]);
+        }
+
+        $store = Database::fetchOne('SELECT id FROM stores WHERE data_source_id = ?', [$dsId]);
+        if ($store) {
+            $storeId = (int) $store['id'];
+            Database::execute('DELETE FROM account_stores WHERE store_id = ?', [$storeId]);
+            Database::execute('DELETE FROM stores WHERE id = ?', [$storeId]);
+        }
+
+        Database::execute('DELETE FROM data_sources WHERE id = ?', [$dsId]);
     }
 
     private static function ensureStoreRecord(string $name, string $platform, int $dataSourceId): array
@@ -93,15 +108,10 @@ final class DemoAccounts
 
     public static function ensureDemoAccounts(): void
     {
-        $srcDs = Seed::ensureMeichongDatasource();
-        $storeA = self::ensureStoreRecord(Seed::MEICHONG_STORE, 'TikTok Shop', (int) $srcDs['id']);
-        $storeBDs = self::ensureStoreBDatasource($srcDs);
-        $storeB = self::ensureStoreRecord(self::DEMO_STORE_B_NAME, 'TikTok Shop', (int) $storeBDs['id']);
+        self::removeLegacyDemoStoreB();
 
-        $storesByName = [
-            (string) $storeA['name'] => $storeA,
-            (string) $storeB['name'] => $storeB,
-        ];
+        $srcDs = Seed::ensureMeichongDatasource();
+        $store = self::ensureStoreRecord(Seed::MEICHONG_STORE, 'TikTok Shop', (int) $srcDs['id']);
 
         foreach (self::demoAccounts() as [$loginName, $displayName, $storeNames]) {
             $account = Database::fetchOne('SELECT * FROM accounts WHERE login_name = ?', [$loginName]);
@@ -118,14 +128,12 @@ final class DemoAccounts
 
             $allowedIds = [];
             foreach ($storeNames as $storeName) {
-                $store = $storesByName[$storeName] ?? null;
-                if ($store) {
+                if ($storeName === Seed::MEICHONG_STORE) {
                     $allowedIds[(int) $store['id']] = true;
                     self::linkAccountStore((int) $account['id'], (int) $store['id']);
                 }
             }
 
-            // 移除 Demo 账号不再绑定的店铺
             $links = Database::fetchAll('SELECT * FROM account_stores WHERE account_id = ?', [(int) $account['id']]);
             foreach ($links as $link) {
                 if (!isset($allowedIds[(int) $link['store_id']])) {

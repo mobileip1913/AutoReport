@@ -1,74 +1,119 @@
-"""Demo 账号 / 店铺种子：报表配置按店铺隔离，账号可绑定多店铺。"""
+"""Demo 账号 / 店铺种子：仅保留美宠真实店铺。"""
 
 from __future__ import annotations
 
-import copy
-
 from sqlalchemy.orm import Session
 
-from app.models import Account, AccountStore, DataSource, FieldMapping, Store
+from app.models import (
+    Account,
+    AccountStore,
+    CatalogColumn,
+    CatalogFile,
+    CatalogSheet,
+    DataImport,
+    DataRow,
+    DataSource,
+    EtlBatch,
+    FieldMapping,
+    FieldMappingPart,
+    MappingLog,
+    ReportRun,
+    ReportValue,
+    Store,
+)
+from app.services.meichong_rules import MEICHONG_CONFIG
+from app.services.production_store import production_store_table_exists, sync_store_production_ids
 from app.services.seed import MEICHONG_STORE, ensure_meichong_datasource
-from app.services.store_clone import clone_catalog, clone_field_mappings
 
-DEMO_STORE_B_NAME = "美宠Demo-欧洲区店铺"
-DEMO_STORE_B_SOURCE = "美宠-欧洲区Demo店铺(TK-EU)"
+# 已废弃的 Demo 欧区店（启动时自动清理）
+LEGACY_DEMO_STORE_B_NAME = "美宠Demo-欧洲区店铺"
+LEGACY_DEMO_STORE_B_SOURCE = "美宠-欧洲区Demo店铺(TK-EU)"
 
 DEMO_ACCOUNTS = [
     ("zhang", "张财务", [MEICHONG_STORE]),
-    ("li", "李运营", [DEMO_STORE_B_NAME]),
-    ("wang", "王主管", [MEICHONG_STORE, DEMO_STORE_B_NAME]),
+    ("li", "李运营", [MEICHONG_STORE]),
+    ("wang", "王主管", [MEICHONG_STORE]),
 ]
 
 
-def _ensure_store_b_datasource(db: Session, src_ds: DataSource) -> DataSource:
-    from app.services.meichong_rules import MEICHONG_CONFIG as meichong_cfg
+def _remove_legacy_demo_store_b(db: Session) -> None:
+    """删除已存在的 Demo 欧区数据源、店铺及关联配置。"""
+    ds = db.query(DataSource).filter(DataSource.name == LEGACY_DEMO_STORE_B_SOURCE).first()
+    if not ds:
+        return
 
-    existing = db.query(DataSource).filter(DataSource.name == DEMO_STORE_B_SOURCE).first()
-    if existing:
-        return existing
+    ds_id = ds.id
+    mapping_ids = [m.id for m in db.query(FieldMapping).filter(FieldMapping.data_source_id == ds_id).all()]
+    if mapping_ids:
+        db.query(ReportValue).filter(ReportValue.mapping_id.in_(mapping_ids)).update(
+            {ReportValue.mapping_id: None}, synchronize_session=False
+        )
 
-    cfg = copy.deepcopy(meichong_cfg)
-    cfg["meta"] = {
-        **(cfg.get("meta") or {}),
-        "项目": "美宠",
-        "平台": "TikTok",
-        "区域": "欧洲",
-        "店铺名称": DEMO_STORE_B_NAME,
-    }
-    ds = DataSource(
-        name=DEMO_STORE_B_SOURCE,
-        platform="TikTok Shop",
-        description="Demo 第二店铺：欧洲区独立报表配置（Catalog/映射从美宠美区克隆，便于对比权限）",
-        config=cfg,
-    )
-    db.add(ds)
+    run_ids = [r.id for r in db.query(ReportRun).filter(ReportRun.data_source_id == ds_id).all()]
+    if run_ids:
+        db.query(ReportValue).filter(ReportValue.report_run_id.in_(run_ids)).delete(synchronize_session=False)
+        db.query(ReportRun).filter(ReportRun.id.in_(run_ids)).delete(synchronize_session=False)
+
+    for m in db.query(FieldMapping).filter(FieldMapping.data_source_id == ds_id).all():
+        db.query(FieldMappingPart).filter(FieldMappingPart.mapping_id == m.id).delete(synchronize_session=False)
+        db.delete(m)
+
+    file_ids = [f.id for f in db.query(CatalogFile).filter(CatalogFile.data_source_id == ds_id).all()]
+    if file_ids:
+        sheet_ids = [
+            s.id
+            for s in db.query(CatalogSheet).filter(CatalogSheet.file_id.in_(file_ids)).all()
+        ]
+        if sheet_ids:
+            db.query(CatalogColumn).filter(CatalogColumn.sheet_id.in_(sheet_ids)).delete(synchronize_session=False)
+            db.query(CatalogSheet).filter(CatalogSheet.id.in_(sheet_ids)).delete(synchronize_session=False)
+        db.query(CatalogFile).filter(CatalogFile.id.in_(file_ids)).delete(synchronize_session=False)
+
+    db.query(EtlBatch).filter(EtlBatch.data_source_id == ds_id).delete(synchronize_session=False)
+
+    imports = db.query(DataImport).filter(DataImport.data_source_id == ds_id).all()
+    import_ids = [i.id for i in imports]
+    if import_ids:
+        db.query(DataRow).filter(DataRow.data_import_id.in_(import_ids)).delete(synchronize_session=False)
+        db.query(MappingLog).filter(MappingLog.data_import_id.in_(import_ids)).delete(synchronize_session=False)
+    for imp in imports:
+        db.delete(imp)
+
+    store = db.query(Store).filter(Store.data_source_id == ds_id).first()
+    if store:
+        db.query(AccountStore).filter(AccountStore.store_id == store.id).delete(synchronize_session=False)
+        db.delete(store)
+
+    db.delete(ds)
     db.commit()
-    db.refresh(ds)
-
-    clone_catalog(db, src_ds.id, ds.id)
-    clone_field_mappings(db, src_ds.id, ds.id)
-
-    # 标记差异：欧区店铺用不同指标名，便于 Demo 区分
-    pay_line = (
-        db.query(FieldMapping)
-        .filter(FieldMapping.data_source_id == ds.id, FieldMapping.label == "应支付金额")
-        .first()
-    )
-    if pay_line:
-        pay_line.label = "应支付金额(欧区口径)"
-        pay_line.description = "Demo：欧区店铺独立报表配置"
-        db.commit()
-    return ds
 
 
-def _ensure_store_record(db: Session, name: str, platform: str, data_source_id: int) -> Store:
+def _ensure_store_record(
+    db: Session,
+    name: str,
+    platform: str,
+    data_source_id: int,
+    *,
+    production_store_id: int | None = None,
+    shop_code: str | None = None,
+) -> Store:
     store = db.query(Store).filter(Store.data_source_id == data_source_id).first()
     if store:
         store.name = name
         store.platform = platform
+        if production_store_id is not None:
+            store.production_store_id = production_store_id
+        if shop_code is not None:
+            store.shop_code = shop_code
         db.commit()
         return store
-    store = Store(name=name, platform=platform, data_source_id=data_source_id)
+    store = Store(
+        name=name,
+        platform=platform,
+        data_source_id=data_source_id,
+        production_store_id=production_store_id,
+        shop_code=shop_code,
+    )
     db.add(store)
     db.commit()
     db.refresh(store)
@@ -87,12 +132,20 @@ def _link_account_store(db: Session, account: Account, store: Store) -> None:
 
 
 def ensure_demo_accounts(db: Session) -> None:
-    src_ds = ensure_meichong_datasource(db)
-    store_a = _ensure_store_record(db, MEICHONG_STORE, "TikTok Shop", src_ds.id)
-    store_b_ds = _ensure_store_b_datasource(db, src_ds)
-    store_b = _ensure_store_record(db, DEMO_STORE_B_NAME, "TikTok Shop", store_b_ds.id)
+    _remove_legacy_demo_store_b(db)
 
-    stores_by_name = {store_a.name: store_a, store_b.name: store_b}
+    src_ds = ensure_meichong_datasource(db)
+    cfg = MEICHONG_CONFIG
+    store = _ensure_store_record(
+        db,
+        MEICHONG_STORE,
+        "TikTok Shop",
+        src_ds.id,
+        production_store_id=cfg.get("production_store_id"),
+        shop_code=cfg.get("shop_code"),
+    )
+    if production_store_table_exists():
+        sync_store_production_ids(db)
 
     for login_name, display_name, store_names in DEMO_ACCOUNTS:
         account = db.query(Account).filter(Account.login_name == login_name).first()
@@ -105,13 +158,11 @@ def ensure_demo_accounts(db: Session) -> None:
             account.display_name = display_name
             db.commit()
 
-        allowed_ids = {stores_by_name[n].id for n in store_names if n in stores_by_name}
+        allowed_ids = {store.id} if MEICHONG_STORE in store_names else set()
         for store_name in store_names:
-            store = stores_by_name.get(store_name)
-            if store:
+            if store_name == MEICHONG_STORE:
                 _link_account_store(db, account, store)
 
-        # 移除 Demo 账号不再绑定的店铺
         for link in list(account.store_links):
             if link.store_id not in allowed_ids:
                 db.delete(link)

@@ -79,6 +79,14 @@ def clear_fact_rows(engine: Engine, table_name: str, data_source_id: int, store_
         )
 
 
+def clear_production_fact_rows(engine: Engine, table_name: str, store_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(f"DELETE FROM `{table_name}` WHERE store_id = :store_id"),
+            {"store_id": store_id},
+        )
+
+
 def insert_fact_rows(
     engine: Engine,
     table_name: str,

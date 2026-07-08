@@ -325,59 +325,75 @@ function bindSettingsCard(card) {
   const meta = (window.DATA_SOURCE_META || {})[dsId] || {};
   const files = meta.files || [];
 
-  const fileSel = card.querySelector('.ds-order-file');
-  const sheetSel = card.querySelector('.ds-order-sheet');
-  const dateColSel = card.querySelector('.ds-order-date-col');
+  const fileHost = card.querySelector('.ds-order-file-host');
+  const sheetHost = card.querySelector('.ds-order-sheet-host');
+  const dateColHost = card.querySelector('.ds-order-date-col-host');
   const timeInput = card.querySelector('.ds-daily-time');
   const timePicker = initTimePicker(card);
   const reviewCount = card.querySelector('.ds-review-count');
 
-  const fillSelect = (sel, items, value) => {
-    sel.innerHTML = '';
-    const empty = document.createElement('option');
-    empty.value = '';
-    empty.textContent = '请选择';
-    sel.appendChild(empty);
-    items.forEach((it) => {
-      const o = document.createElement('option');
-      o.value = typeof it === 'string' ? it : it.keyword || it;
-      o.textContent = typeof it === 'string' ? it : (it.label || it.keyword || it);
-      sel.appendChild(o);
-    });
-    if (value) sel.value = value;
-  };
+  let sheetSelect;
+  const fileSelect = new SelectField(fileHost, {
+    placeholder: '请选择来源文件',
+    options: fileSelectOptions(files),
+    size: 'md',
+    onChange: (fileKw) => {
+      loadSheets(fileKw, '').then(() => loadCols(fileKw, sheetSelect.val(), ''));
+    },
+  });
+  sheetSelect = new SelectField(sheetHost, {
+    placeholder: '请先选择来源文件',
+    options: [],
+    size: 'md',
+    onChange: (sheet) => loadCols(fileSelect.val(), sheet, ''),
+  });
+  const dateColCombo = new SearchCombo(dateColHost, [], {
+    placeholder: '搜索列头，如 Time',
+    emptyHint: '请先选择 Sheet',
+    noMatchHint: '无匹配列头',
+    size: 'md',
+  });
 
-  const loadSheets = async (fileKw) => {
+  const loadSheets = async (fileKw, keepSheet) => {
     if (!fileKw) {
-      fillSelect(sheetSel, []);
-      fillSelect(dateColSel, []);
+      sheetSelect.setOpts([], '请先选择来源文件');
+      sheetSelect.setDisabled(true);
+      dateColCombo.setOpts([]);
+      dateColCombo.set('');
       return;
     }
     const data = await apiJson(`/api/data-sources/${dsId}/schema?file=${encodeURIComponent(fileKw)}`);
-    fillSelect(sheetSel, data.sheets || []);
+    const sheets = data.sheets || [];
+    sheetSelect.setOpts(sheets, sheets.length ? '请选择 Sheet' : '该文件无 Sheet');
+    sheetSelect.setDisabled(!sheets.length);
+    if (keepSheet !== undefined) {
+      const sheet = keepSheet && sheets.includes(keepSheet) ? keepSheet : '';
+      sheetSelect.set(sheet);
+    }
   };
 
-  const loadCols = async (fileKw, sheet) => {
+  const loadCols = async (fileKw, sheet, keepCol) => {
     if (!fileKw || !sheet) {
-      fillSelect(dateColSel, []);
+      dateColCombo.setOpts([]);
+      dateColCombo.set('');
       return;
     }
     const q = `file=${encodeURIComponent(fileKw)}&sheet=${encodeURIComponent(sheet)}`;
     const data = await apiJson(`/api/data-sources/${dsId}/schema?${q}`);
-    fillSelect(dateColSel, data.columns || []);
+    const cols = data.columns || [];
+    dateColCombo.setOpts(cols);
+    if (keepCol !== undefined) {
+      dateColCombo.set(keepCol && cols.includes(keepCol) ? keepCol : '');
+    }
   };
-
-  fillSelect(fileSel, files.map((f) => ({ keyword: f.keyword, label: f.file_name || f.keyword })));
 
   const initial = (window.DS_SETTINGS || {})[dsId] || {};
   const tplSel = card.querySelector('.ds-excel-template');
   if (initial.excel_template_file && tplSel) tplSel.value = initial.excel_template_file;
-  if (initial.order_file) fileSel.value = initial.order_file;
-  loadSheets(initial.order_file).then(() => {
-    if (initial.order_sheet) sheetSel.value = initial.order_sheet;
-    return loadCols(initial.order_file, initial.order_sheet);
+  if (initial.order_file) fileSelect.set(initial.order_file);
+  loadSheets(initial.order_file, initial.order_sheet).then(() => {
+    return loadCols(initial.order_file, initial.order_sheet, initial.order_date_col);
   }).then(() => {
-    if (initial.order_date_col) dateColSel.value = initial.order_date_col;
     if (initial.daily_generate_at && timePicker) timePicker.applyValue(initial.daily_generate_at);
     if (reviewCount) reviewCount.textContent = String(initial.review_order_count || 0);
     const orderCountEl = card.querySelector('.ds-review-order-count');
@@ -385,17 +401,12 @@ function bindSettingsCard(card) {
     updateReviewLogisticsSummary(dsId, initial);
   }).catch(() => {});
 
-  fileSel.addEventListener('change', () => {
-    loadSheets(fileSel.value).then(() => loadCols(fileSel.value, sheetSel.value));
-  });
-  sheetSel.addEventListener('change', () => loadCols(fileSel.value, sheetSel.value));
-
   card.querySelector('.btn-save-ds-settings')?.addEventListener('click', async () => {
     try {
       const body = {
-        order_file: fileSel.value || null,
-        order_sheet: sheetSel.value || null,
-        order_date_col: dateColSel.value || null,
+        order_file: fileSelect.val() || null,
+        order_sheet: sheetSelect.val() || null,
+        order_date_col: dateColCombo.val() || null,
         daily_generate_at: timeInput.value || null,
         excel_template_file: card.querySelector('.ds-excel-template')?.value || null,
       };

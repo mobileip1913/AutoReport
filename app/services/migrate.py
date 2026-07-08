@@ -15,6 +15,8 @@ def run_migrations():
     _ensure_report_run_columns()
     _ensure_field_mapping_report_columns()
     _ensure_report_value_columns()
+    _ensure_store_production_columns()
+    _ensure_etl_batch_excel_order_id()
 
 
 def _add_column_if_missing(conn, table: str, column: str, ddl_type: str):
@@ -88,6 +90,23 @@ def _ensure_field_mapping_report_columns():
         cols = {c["name"] for c in insp.get_columns("field_mappings")}
         if "logical_field_id" in cols:
             pass  # 已有列，nullable 仅对新 ORM 插入生效
+
+
+def _ensure_store_production_columns():
+    insp = inspect(engine)
+    if "stores" not in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        _add_column_if_missing(conn, "stores", "production_store_id", "INTEGER")
+        _add_column_if_missing(conn, "stores", "shop_code", "VARCHAR(255)")
+
+
+def _ensure_etl_batch_excel_order_id():
+    insp = inspect(engine)
+    if "etl_batches" not in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        _add_column_if_missing(conn, "etl_batches", "excel_order_id", "INTEGER")
 
 
 def _ensure_report_value_columns():

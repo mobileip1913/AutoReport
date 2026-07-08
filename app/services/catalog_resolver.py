@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.models import CatalogColumn, CatalogFile, CatalogSheet
+
+
+def catalog_file_display_label(file: CatalogFile) -> str:
+    """UI 下拉用短名：优先 file_label / keyword，不从完整 file_name 截断。"""
+    lbl = (file.file_label or "").strip()
+    if lbl and lbl != file.file_name and not lbl.lower().endswith((".xlsx", ".xls")):
+        return lbl
+    kw = (file.keyword or "").strip()
+    if kw:
+        return kw
+    name = re.sub(r"\.xlsx?$", "", file.file_name or "", flags=re.I)
+    name = re.sub(r"_\d{8}(?:-\d{8})?$", "", name)
+    parts = [p for p in name.split("_") if p]
+    return parts[-1] if parts else (name or "文件")
 
 
 @dataclass
@@ -75,7 +90,15 @@ def list_catalog_files(db: Session, data_source_id: int) -> list[dict]:
         .order_by(CatalogFile.id)
         .all()
     )
-    return [{"file_name": r.file_name, "keyword": r.keyword} for r in rows]
+    return [
+        {
+            "file_name": r.file_name,
+            "keyword": r.keyword,
+            "file_label": r.file_label,
+            "label": catalog_file_display_label(r),
+        }
+        for r in rows
+    ]
 
 
 def list_catalog_sheets(db: Session, data_source_id: int, file_keyword: str) -> list[str]:

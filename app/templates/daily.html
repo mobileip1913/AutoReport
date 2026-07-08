@@ -211,13 +211,13 @@
 
           <td class="px-4 py-3">
 
-            {% if row.editable %}
+            {% if row.editable and not row.is_manual %}
 
             <div class="value-editor relative">
 
-              <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 {% if row.is_manual %}text-amber-800 bg-amber-50/80 border-amber-200{% elif row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
+              <button type="button" class="value-display w-full text-left font-mono text-sm font-semibold px-2 py-1.5 rounded-lg border border-transparent hover:border-slate-200 hover:bg-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-sky-300 {% if row.is_overridden %}text-amber-900{% elif not row.display_value %}text-slate-300{% else %}text-slate-800{% endif %}">
 
-                {{ row.display_value or '点击填写' }}
+                {{ row.display_value or '—' }}
 
               </button>
 
@@ -233,15 +233,7 @@
 
             {% if row.is_manual %}
 
-              {% if row.display_value %}
-
-              <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">已填写</span>
-
-              {% else %}
-
-              <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">待填写</span>
-
-              {% endif %}
+            <span class="status-tag text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">导出后填</span>
 
             {% elif row.is_overridden %}
 
@@ -284,7 +276,7 @@
 
     <span>点击指标名称可修改</span>
 
-    {% if run %}<span>点击报表值可编辑；改规则后请重新生成日报</span>{% endif %}
+    {% if run %}<span>非手工列可点击报表值编辑；手工列导出 Excel 后由财务填写</span>{% endif %}
 
   </div>
 
@@ -326,9 +318,9 @@
 
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
 
-<script src="/static/mappings_settings.js?v=20260707u"></script>
-
-<script src="/static/mapping_modal.js?v=20260707sdr"></script>
+<script src="/static/form_controls.js?v=20260708a"></script>
+<script src="/static/mappings_settings.js?v=20260708d"></script>
+<script src="/static/mapping_modal.js?v=20260708c"></script>
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
@@ -383,7 +375,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 {% if excel_rows is not none %}
 
-<script src="/static/daily_editor.js?v=20260707o"></script>
+<script src="/static/daily_editor.js?v=20260708a"></script>
 
 {% endif %}
 

@@ -177,13 +177,11 @@
     const displayBtn = row.querySelector('.value-display');
     const statusTag = row.querySelector('.status-tag');
     const isManual = row.dataset.manual === '1';
-    if (displayBtn) {
-      displayBtn.textContent = data.display_value || (isManual ? '点击填写' : '—');
+    if (displayBtn && !isManual) {
+      displayBtn.textContent = data.display_value || '—';
     }
     row.classList.toggle('daily-row--overridden', !!data.is_overridden);
-    if (statusTag && isManual) {
-      statusTag.textContent = data.display_value ? '已填写' : '待填写';
-    } else if (statusTag && data.is_overridden) {
+    if (statusTag && !isManual && data.is_overridden) {
       statusTag.textContent = '已调整';
     }
   }
@@ -205,6 +203,7 @@
 
   if (runId) {
     tbody.querySelectorAll('.daily-row').forEach((row) => {
+      if (row.dataset.manual === '1') return;
       const displayBtn = row.querySelector('.value-display');
       const input = row.querySelector('.value-input');
       if (!displayBtn || !input) return;

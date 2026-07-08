@@ -38,6 +38,9 @@ MEICHONG_CONFIG = {
     "review_logistics_mode": "per_order_fixed",
     "review_logistics_per_order": 1,
     "review_logistics_exclude_same_day_refund": True,
+    "fact_schema": "production",
+    "production_store_id": 3,
+    "shop_code": "USLCQPEV3N",
     "meta": {"项目": "美宠", "平台": "TikTok", "区域": "美国", "店铺名称": "平衡贴美国本土店铺"},
 }
 
@@ -345,8 +348,9 @@ def apply_meichong_rules(db: Session, reset: bool = True) -> None:
             db.add(mapping)
             db.flush()
         mapping.description = desc
-        for p in parts:
-            db.add(FieldMappingPart(mapping_id=mapping.id, **p))
+        if reset or not mapping.parts:
+            for p in parts:
+                db.add(FieldMappingPart(mapping_id=mapping.id, **p))
     db.commit()
 
     from app.services.report_line_sync import sync_report_lines

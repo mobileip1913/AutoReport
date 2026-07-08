@@ -13,10 +13,10 @@ from app.services.migrate import (
     repair_actual_order_count_parts,
     run_migrations,
 )
-from app.services.meichong_rules import ensure_meichong_rules
-from app.services.report_line_sync import backfill_mapping_line_codes, convert_formula_lines_to_fetch, sync_report_lines
-from app.services.meichong_rules import TEMPLATE_GROUPS, TEMPLATE_LINES
+from app.services.catalog_cleanup import cleanup_legacy_fact_catalog, ensure_production_fact_schema
 from app.services.demo_accounts import ensure_demo_accounts
+from app.services.meichong_rules import TEMPLATE_GROUPS, TEMPLATE_LINES, ensure_meichong_rules
+from app.services.report_line_sync import backfill_mapping_line_codes, convert_formula_lines_to_fetch, sync_report_lines
 from app.services.seed import ensure_meichong_datasource
 from app.services.scheduler import refresh_schedules, shutdown_scheduler, start_scheduler
 from app.models import DataSource, FieldMapping
@@ -40,6 +40,9 @@ def on_startup():
     try:
         # 老 Demo 数据源（Amazon/Shopee/TikTok UK）已停用，仅保留美宠真实数据源
         ensure_meichong_datasource(db)
+        for ds in db.query(DataSource).all():
+            ensure_production_fact_schema(db, ds.id)
+            cleanup_legacy_fact_catalog(db, ds.id)
         ensure_logical_fields(db)
         migrate_legacy_mappings(db)
         migrate_cancelled_date_to_created(db)

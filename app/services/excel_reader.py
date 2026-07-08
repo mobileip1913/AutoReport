@@ -74,6 +74,45 @@ def _is_description_row(rows: list[tuple], header_idx: int) -> bool:
     return checked > 0 and text_hits / checked >= 0.5
 
 
+def _is_field_description_data_row(row: tuple, headers: list[str]) -> bool:
+    """TikTok 导出：表头下一行常为各列字段说明（整行是说明文字）。"""
+    filled = 0
+    desc_like = 0
+    for i, header in enumerate(headers):
+        if not header:
+            continue
+        val = row[i] if i < len(row) else None
+        text = _normalize_header(val)
+        if not text:
+            continue
+        filled += 1
+        lower = text.lower()
+        if (
+            len(text) > 30
+            or (text.endswith(".") and " " in text and not text[0].isdigit())
+            or "unique " in lower
+            or "order id" in lower and len(text) > 15
+            or lower.startswith("the ")
+            or " when " in lower
+        ):
+            desc_like += 1
+    return filled >= 3 and desc_like / filled >= 0.4
+
+
+def _dedupe_headers(headers: list[str]) -> list[str]:
+    """重复 Excel 列头追加「 2」「 3」…，与生产 DDL `_2` 列 COMMENT 对齐。"""
+    seen: dict[str, int] = {}
+    out: list[str] = []
+    for h in headers:
+        if not h:
+            out.append("")
+            continue
+        count = seen.get(h, 0)
+        seen[h] = count + 1
+        out.append(h if count == 0 else f"{h} {count + 1}")
+    return out
+
+
 def read_sheet_rows(path: Path, sheet_name: str) -> tuple[list[str], list[dict[str, Any]]]:
     """返回 (headers, [{header: value}, ...])。"""
     wb = load_workbook(path, read_only=True, data_only=True)
@@ -92,15 +131,18 @@ def read_sheet_rows(path: Path, sheet_name: str) -> tuple[list[str], list[dict[s
         return [], []
 
     header_idx = detect_header_row(raw_rows)
-    if _is_description_row(raw_rows, header_idx):
-        header_idx += 1
 
     headers = [_normalize_header(v) for v in raw_rows[header_idx]]
     while headers and not headers[-1]:
         headers.pop()
+    headers = _dedupe_headers(headers)
+
+    data_start = header_idx + 1
+    while data_start < len(raw_rows) and _is_field_description_data_row(raw_rows[data_start], headers):
+        data_start += 1
 
     records: list[dict[str, Any]] = []
-    for row in raw_rows[header_idx + 1 :]:
+    for row in raw_rows[data_start:]:
         if not any(_normalize_header(v) for v in row):
             continue
         item: dict[str, Any] = {}

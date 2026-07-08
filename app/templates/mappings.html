@@ -55,15 +55,15 @@
         <div class="ds-baseline-grid">
           <div class="ds-field">
             <label class="ds-field-label">来源文件</label>
-            <select class="ds-order-file w-full border rounded-lg px-2 py-1.5 text-sm"></select>
+            <div class="ds-order-file-host"></div>
           </div>
           <div class="ds-field">
             <label class="ds-field-label">Sheet</label>
-            <select class="ds-order-sheet w-full border rounded-lg px-2 py-1.5 text-sm"></select>
+            <div class="ds-order-sheet-host"></div>
           </div>
           <div class="ds-field">
             <label class="ds-field-label">日期列</label>
-            <select class="ds-order-date-col w-full border rounded-lg px-2 py-1.5 text-sm"></select>
+            <div class="ds-order-date-col-host"></div>
           </div>
         </div>
         <div class="mt-2 ds-current-summary">
@@ -238,8 +238,9 @@
 <script>window.DATA_SOURCE_META = {{ meta_json | safe }};</script>
 <script>window.DS_SETTINGS = {{ ds_settings_json | safe }};</script>
 <script>window.REUSE_FIELDS_BY_DS = {{ reuse_fields_json | safe }};</script>
-<script src="/static/mappings_settings.js?v=20260707u"></script>
-<script src="/static/mapping_modal.js?v=20260707sdr"></script>
+<script src="/static/form_controls.js?v=20260708a"></script>
+<script src="/static/mappings_settings.js?v=20260708d"></script>
+<script src="/static/mapping_modal.js?v=20260708c"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const hash = location.hash;

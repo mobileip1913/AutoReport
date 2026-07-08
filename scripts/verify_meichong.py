@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""端到端对账：从原始 DataRow 独立重算关键指标，与引擎结果交叉验证。
+"""端到端对账：从事实表独立重算关键指标，与引擎结果交叉验证。
 
 用法（venv 下）：python scripts/verify_meichong.py [YYYY-MM-DD]
 """
@@ -13,7 +13,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal
-from app.models import DataImport, DataRow, DataSource
+from app.models import DataSource
+from app.services.fact_provider import load_fact_rows
 from app.services.field_aggregator import _to_number, parse_date
 from app.services.report_engine import aggregate_field_values
 from app.services.seed import MEICHONG_SOURCE_NAME, MEICHONG_STORE
@@ -22,12 +23,10 @@ from app.services.seed import MEICHONG_SOURCE_NAME, MEICHONG_STORE
 def main(report_date: str) -> None:
     db = SessionLocal()
     ds = db.query(DataSource).filter(DataSource.name == MEICHONG_SOURCE_NAME).first()
-    imps = db.query(DataImport).filter(DataImport.data_source_id == ds.id).all()
-    import_ids = [i.id for i in imps]
-    rows = db.query(DataRow).filter(DataRow.data_import_id.in_(import_ids)).all()
+    fact_rows, _ = load_fact_rows(db, ds.id, MEICHONG_STORE)
     rd = parse_date(report_date, "iso")
 
-    order_rows = [r for r in rows if r.sheet_name == "OrderSKUList"]
+    order_rows = [r for r in fact_rows if r.sheet_name == "OrderSKUList"]
 
     # 样品订单集：同订单 SKU 总额(After+Platform)=0
     per_order_total = defaultdict(float)

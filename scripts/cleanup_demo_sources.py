@@ -23,7 +23,12 @@ from app.models import (
 from app.services.seed import MEICHONG_SOURCE_NAME
 
 # 要删除的 Demo 数据源名称
-DEMO_SOURCE_NAMES = ["Amazon US 店铺", "Shopee SG 店铺", "TikTok Shop UK 店铺"]
+DEMO_SOURCE_NAMES = [
+    "Amazon US 店铺",
+    "Shopee SG 店铺",
+    "TikTok Shop UK 店铺",
+    "美宠-欧洲区Demo店铺(TK-EU)",
+]
 
 
 def main() -> None:
