@@ -18,6 +18,7 @@ export default defineConfig({
       '/api': { target: 'http://127.0.0.1:8091', changeOrigin: true },
       '/demo': { target: 'http://127.0.0.1:8091', changeOrigin: true },
       '/daily': { target: 'http://127.0.0.1:8091', changeOrigin: true },
+      '/static': { target: 'http://127.0.0.1:8091', changeOrigin: true },
     },
   },
   build: {

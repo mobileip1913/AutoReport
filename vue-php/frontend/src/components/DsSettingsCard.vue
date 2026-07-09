@@ -1,148 +1,248 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
-import { NCard, NForm, NFormItem, NSelect, NButton, NSpace, NStatistic } from 'naive-ui'
+import { ref, watch, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
 import { api } from '@/api/client'
 import { useMessage } from '@/composables/useMessage'
 import { useCatalog } from '@/composables/useCatalog'
 
+declare global {
+  interface Window {
+    SelectField?: new (
+      container: HTMLElement,
+      opts: Record<string, unknown>,
+    ) => {
+      set: (v: string) => void
+      setOpts: (opts: unknown[], placeholder?: string) => void
+      setDisabled: (d: boolean) => void
+      val: () => string
+      destroy?: () => void
+    }
+    SearchCombo?: new (
+      container: HTMLElement,
+      options: string[],
+      opts: Record<string, unknown>,
+    ) => {
+      set: (v: string) => void
+      setOpts: (opts: string[]) => void
+      val: () => string
+      destroy?: () => void
+    }
+  }
+}
+
 const props = defineProps<{ dataSourceId: number }>()
-const emit = defineEmits<{ saved: [] }>()
+const emit = defineEmits<{ saved: []; openSchedule: [] }>()
 
 const msg = useMessage()
 const settings = ref<Record<string, unknown>>({})
-const loading = ref(false)
+const loading = ref(true)
 const saving = ref(false)
 
+const fileHost = ref<HTMLElement | null>(null)
+const sheetHost = ref<HTMLElement | null>(null)
+const dateColHost = ref<HTMLElement | null>(null)
+
+let fileSelect: InstanceType<NonNullable<typeof window.SelectField>> | null = null
+let sheetSelect: InstanceType<NonNullable<typeof window.SelectField>> | null = null
+let dateColCombo: InstanceType<NonNullable<typeof window.SearchCombo>> | null = null
+
+const scheduleLabel = computed(() => {
+  const t = String(settings.value.daily_generate_at ?? '')
+  return t || '未设置'
+})
+
 const dsIdFn = () => props.dataSourceId
-const { files, loadFiles, loadSheets, loadColumns } = useCatalog(dsIdFn)
+const { loadFiles, fileOptions, loadSheets: fetchSheetNames, loadColumns } = useCatalog(dsIdFn)
 
-const fileOptions = computed(() =>
-  files.value.map((f) => ({
-    label: f.label ?? f.file_label ?? f.keyword,
-    value: f.keyword,
-  })),
-)
+function loadScript(src: string): Promise<void> {
+  if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve()
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script')
+    s.src = src
+    s.onload = () => resolve()
+    s.onerror = () => reject(new Error(`load ${src} failed`))
+    document.head.appendChild(s)
+  })
+}
 
-const sheetOptions = ref<{ label: string; value: string }[]>([])
-const dateColOptions = ref<{ label: string; value: string }[]>([])
+async function loadSheets(fileKw: string, keepSheet = '') {
+  if (!fileKw) {
+    sheetSelect?.setOpts([], '请先选择来源文件')
+    sheetSelect?.setDisabled(true)
+    dateColCombo?.setOpts([])
+    dateColCombo?.set('')
+    return
+  }
+  const sheets = await fetchSheetNames(fileKw)
+  sheetSelect?.setOpts(sheets, sheets.length ? '请选择 Sheet' : '该文件无 Sheet')
+  sheetSelect?.setDisabled(!sheets.length)
+  const sheet = keepSheet && sheets.includes(keepSheet) ? keepSheet : ''
+  sheetSelect?.set(sheet)
+}
+
+async function loadCols(fileKw: string, sheet: string, keepCol = '') {
+  if (!fileKw || !sheet) {
+    dateColCombo?.setOpts([])
+    dateColCombo?.set('')
+    return
+  }
+  const cols = await loadColumns(fileKw, sheet)
+  dateColCombo?.setOpts(cols)
+  dateColCombo?.set(keepCol && cols.includes(keepCol) ? keepCol : '')
+}
+
+function initControls() {
+  if (!fileHost.value || !sheetHost.value || !dateColHost.value) return
+  if (!window.SelectField || !window.SearchCombo) return
+
+  fileSelect?.destroy?.()
+  sheetSelect?.destroy?.()
+  dateColCombo?.destroy?.()
+
+  fileSelect = new window.SelectField(fileHost.value, {
+    placeholder: '请选择来源文件',
+    options: fileOptions(),
+    size: 'md',
+    onChange: (fileKw: string) => {
+      settings.value.order_file = fileKw
+      loadSheets(fileKw, '')
+      loadCols(fileKw, '', '')
+    },
+  })
+
+  sheetSelect = new window.SelectField(sheetHost.value, {
+    placeholder: '请先选择来源文件',
+    options: [],
+    size: 'md',
+    onChange: (sheet: string) => {
+      settings.value.order_sheet = sheet
+      loadCols(String(settings.value.order_file ?? ''), sheet, '')
+    },
+  })
+  sheetSelect.setDisabled(true)
+
+  dateColCombo = new window.SearchCombo(dateColHost.value, [], {
+    placeholder: '搜索列头，如 Time',
+    emptyHint: '请先选择 Sheet',
+    noMatchHint: '无匹配列头',
+    size: 'md',
+    onPick: (col: string) => {
+      settings.value.order_date_col = col
+    },
+  })
+}
+
+async function applySettingsToControls() {
+  const initial = settings.value
+  const kw = String(initial.order_file ?? '')
+  if (kw) fileSelect?.set(kw)
+  await loadSheets(kw, String(initial.order_sheet ?? ''))
+  await loadCols(kw, String(initial.order_sheet ?? ''), String(initial.order_date_col ?? ''))
+}
 
 async function loadSettings() {
   loading.value = true
   try {
+    await loadScript('/static/form_controls.js')
     await loadFiles()
     const { data } = await api.get(`/api/data-sources/${props.dataSourceId}/settings`)
     settings.value = data
-    await refreshSheets()
-    await refreshDateCols()
-  } finally {
+    loading.value = false
+    await nextTick()
+    initControls()
+    await applySettingsToControls()
+  } catch (e: unknown) {
+    msg.error(e instanceof Error ? e.message : '加载失败')
     loading.value = false
   }
-}
-
-async function refreshSheets() {
-  const kw = String(settings.value.order_file ?? '')
-  if (!kw) {
-    sheetOptions.value = []
-    return
-  }
-  const sheets = await loadSheets(kw)
-  sheetOptions.value = sheets.map((s) => ({ label: s, value: s }))
-}
-
-async function refreshDateCols() {
-  const kw = String(settings.value.order_file ?? '')
-  const sh = String(settings.value.order_sheet ?? '')
-  if (!kw || !sh) {
-    dateColOptions.value = []
-    return
-  }
-  const cols = await loadColumns(kw, sh)
-  dateColOptions.value = cols.map((c) => ({ label: c, value: c }))
-}
-
-async function onFileChange(v: string) {
-  settings.value.order_file = v
-  settings.value.order_sheet = ''
-  settings.value.order_date_col = ''
-  await refreshSheets()
-}
-
-async function onSheetChange(v: string) {
-  settings.value.order_sheet = v
-  settings.value.order_date_col = ''
-  await refreshDateCols()
 }
 
 async function save() {
   saving.value = true
   try {
-    const { data } = await api.put(`/api/data-sources/${props.dataSourceId}/settings`, settings.value)
+    const body = {
+      ...settings.value,
+      order_file: fileSelect?.val() || null,
+      order_sheet: sheetSelect?.val() || null,
+      order_date_col: dateColCombo?.val() || null,
+    }
+    const { data } = await api.put(`/api/data-sources/${props.dataSourceId}/settings`, body)
     settings.value = data
     msg.success('数据源设置已保存')
     emit('saved')
   } catch (e: unknown) {
-    const err = e as { response?: { data?: { detail?: string } } }
-    msg.error(err.response?.data?.detail ?? '保存失败')
+    msg.error(e instanceof Error ? e.message : '保存失败')
   } finally {
     saving.value = false
   }
 }
 
+function onScheduleSaved(time: string) {
+  settings.value.daily_generate_at = time
+}
+
 watch(
   () => props.dataSourceId,
   () => loadSettings(),
-  { immediate: true },
+  { immediate: false },
 )
+
+onMounted(loadSettings)
+onBeforeUnmount(() => {
+  fileSelect?.destroy?.()
+  sheetSelect?.destroy?.()
+  dateColCombo?.destroy?.()
+})
+
+defineExpose({ onScheduleSaved, reload: loadSettings })
 </script>
 
 <template>
-  <NCard title="数据源设置" size="small" :loading="loading">
-    <NForm label-placement="left" label-width="120">
-      <NFormItem label="订单文件">
-        <NSelect
-          :value="String(settings.order_file ?? '')"
-          :options="fileOptions"
-          filterable
-          placeholder="选择订单文件"
-          @update:value="onFileChange"
-        />
-      </NFormItem>
-      <NFormItem label="订单 Sheet">
-        <NSelect
-          :value="String(settings.order_sheet ?? '')"
-          :options="sheetOptions"
-          filterable
-          placeholder="选择 Sheet"
-          @update:value="onSheetChange"
-        />
-      </NFormItem>
-      <NFormItem label="日期列">
-        <NSelect
-          :value="String(settings.order_date_col ?? '')"
-          :options="dateColOptions"
-          filterable
-          placeholder="选择日期列"
-          @update:value="(v) => (settings.order_date_col = v)"
-        />
-      </NFormItem>
-      <NFormItem label="日期格式">
-        <NSelect
-          :value="String(settings.order_date_format ?? '')"
-          :options="[
-            { label: 'MM/DD/YYYY', value: 'MM/DD/YYYY' },
-            { label: 'YYYY-MM-DD', value: 'YYYY-MM-DD' },
-            { label: 'M/D/YYYY', value: 'M/D/YYYY' },
-          ]"
-          @update:value="(v) => (settings.order_date_format = v)"
-        />
-      </NFormItem>
-    </NForm>
-    <NSpace>
-      <NStatistic label="刷单单数" :value="Number(settings.review_order_distinct ?? 0)" />
-      <NStatistic label="样品单数" :value="Number(settings.sample_order_distinct ?? 0)" />
-    </NSpace>
-    <template #action>
-      <NButton type="primary" :loading="saving" @click="save">保存设置</NButton>
-    </template>
-  </NCard>
+  <div
+    class="ds-settings-card bg-white rounded-xl shadow border border-slate-200 mb-4"
+    :data-ds-id="dataSourceId"
+  >
+    <div v-if="loading" class="px-4 py-6 text-sm text-slate-400">加载中…</div>
+    <div v-else class="ds-settings-body px-4 py-3">
+      <div class="ds-settings-main min-w-0">
+        <div class="ds-settings-head flex flex-wrap items-start justify-between gap-3 mb-2">
+          <div class="ds-settings-head-title">
+            <span class="section-inline-title">主表与筛选时间</span>
+            <span class="text-xs text-slate-500">跨表关联与样品/刷单排除均以此为准</span>
+          </div>
+          <div class="ds-settings-head-actions">
+            <span class="ds-timezone-label">Asia/Shanghai</span>
+            <button
+              type="button"
+              class="btn-open-schedule px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap"
+              @click="emit('openSchedule')"
+            >
+              每日自动生成 · <span class="ds-schedule-label">{{ scheduleLabel }}</span>
+            </button>
+            <button
+              type="button"
+              class="btn-save-ds-settings px-4 py-1.5 btn-primary text-sm whitespace-nowrap"
+              :disabled="saving"
+              @click="save"
+            >
+              {{ saving ? '保存中…' : '保存' }}
+            </button>
+          </div>
+        </div>
+        <div class="ds-baseline-grid">
+          <div class="ds-field">
+            <label class="ds-field-label">来源文件</label>
+            <div ref="fileHost" class="ds-order-file-host" />
+          </div>
+          <div class="ds-field">
+            <label class="ds-field-label">Sheet</label>
+            <div ref="sheetHost" class="ds-order-sheet-host" />
+          </div>
+          <div class="ds-field">
+            <label class="ds-field-label">日期列</label>
+            <div ref="dateColHost" class="ds-order-date-col-host" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </template>

@@ -51,20 +51,31 @@ $errorMiddleware->setDefaultErrorHandler(function (
 $pages = new PagesController();
 $api = new ApiController();
 
-// ---------- 页面路由（routers/pages.py 对等） ----------
+/** Twig 页面已迁 Vue SPA；8090 仅保留 API/导出，页面 302 到 vue-php */
+$vueAppBase = rtrim(getenv('VUE_APP_URL') ?: 'http://127.0.0.1:8091/app', '/');
+$vueRedirect = function (ServerRequestInterface $request, ResponseInterface $response, string $path = '') use ($vueAppBase): ResponseInterface {
+    $q = $request->getUri()->getQuery();
+    $target = $vueAppBase . ($path !== '' ? '/' . ltrim($path, '/') : '');
+    if ($q !== '') {
+        $target .= '?' . $q;
+    }
+    return $response->withHeader('Location', $target)->withStatus(302);
+};
+
+// ---------- 页面路由（Twig → Vue 302；POST/API/导出仍在本端口） ----------
 $app->post('/demo/switch-account', [$pages, 'switchAccount']);
 $app->post('/demo/switch-store', [$pages, 'switchStore']);
-$app->get('/', [$pages, 'dashboard']);
+$app->get('/', fn ($req, $res) => $vueRedirect($req, $res));
 $app->get('/templates', [$pages, 'templatesRedirect']);
 $app->get('/templates/{template_id:[0-9]+}', [$pages, 'templatesRedirect']);
 $app->post('/templates/{template_id:[0-9]+}/test', [$pages, 'testTemplate']);
 $app->post('/templates/{template_id:[0-9]+}/publish', [$pages, 'publishTemplate']);
 $app->post('/templates/{template_id:[0-9]+}/unpublish', [$pages, 'unpublishTemplate']);
-$app->get('/mappings', [$pages, 'mappings']);
+$app->get('/mappings', fn ($req, $res) => $vueRedirect($req, $res, 'mappings'));
 $app->get('/logs', [$pages, 'logs']);
 $app->get('/reports', [$pages, 'reports']);
 $app->get('/reports/{run_id:[0-9]+}', [$pages, 'reportDetail']);
-$app->get('/daily', [$pages, 'daily']);
+$app->get('/daily', fn ($req, $res) => $vueRedirect($req, $res, 'daily'));
 $app->post('/daily/generate', [$pages, 'dailyGenerate']);
 $app->get('/daily/review-template', [$pages, 'dailyReviewTemplate']);
 $app->get('/daily/review-logistics-template', [$pages, 'dailyReviewLogisticsTemplate']);

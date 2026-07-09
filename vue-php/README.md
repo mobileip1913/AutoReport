@@ -98,7 +98,10 @@ python bin\api_smoke_test.py
 见 [docs/Vue迁移Checklist.md](docs/Vue迁移Checklist.md)。
 
 - [x] 独立目录、`/app/` 构建、SPA fallback
-- [x] Backend 镜像 + Bootstrap API（session / mappings / daily）
-- [x] Naive UI + Pinia + 三页初版（bootstrap 驱动）
-- [ ] MappingModal / DailyEditor 完整迁移
-- [ ] 全链路 browser-act 验收
+- [x] Backend 镜像 + Bootstrap API
+- [x] 三页完整 Hub UI + MappingModal / FormulaModal / DailyEditor
+- [x] ReviewSettings / ScheduleSettings / AuxFieldsTable
+- [x] 8090 页面 302 → `/app/`
+- [x] API 19/19 + browser-act 全链路验收
+
+**Vue 为 PHP 默认可操作前端。**

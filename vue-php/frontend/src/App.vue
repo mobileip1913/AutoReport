@@ -1,7 +1,12 @@
 <script setup lang="ts">
+import { NDialogProvider, NMessageProvider } from 'naive-ui'
 import AppLayout from '@/layouts/AppLayout.vue'
 </script>
 
 <template>
-  <AppLayout />
+  <NMessageProvider>
+    <NDialogProvider>
+      <AppLayout />
+    </NDialogProvider>
+  </NMessageProvider>
 </template>

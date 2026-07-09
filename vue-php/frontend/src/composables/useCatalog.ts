@@ -16,7 +16,10 @@ export function useCatalog(dataSourceId: () => number | null) {
     const id = dataSourceId()
     if (!id) return
     const { data } = await api.get(`/api/data-sources/${id}/catalog`)
-    files.value = data.files ?? data.tree?.files ?? []
+    const tree = data.files ?? data.tree?.files ?? []
+    files.value = tree.map((f: string | CatalogFile) =>
+      typeof f === 'string' ? { keyword: f, label: f } : f,
+    )
   }
 
   async function loadSheets(fileKeyword: string) {
@@ -24,7 +27,7 @@ export function useCatalog(dataSourceId: () => number | null) {
     if (!id || !fileKeyword) return []
     if (sheetsByFile.value[fileKeyword]) return sheetsByFile.value[fileKeyword]
     const { data } = await api.get(`/api/data-sources/${id}/schema`, {
-      params: { file_keyword: fileKeyword },
+      params: { file: fileKeyword },
     })
     const sheets = (data.sheets ?? []) as string[]
     sheetsByFile.value[fileKeyword] = sheets
@@ -37,12 +40,37 @@ export function useCatalog(dataSourceId: () => number | null) {
     const key = `${fileKeyword}::${sheetName}`
     if (columnsByKey.value[key]) return columnsByKey.value[key]
     const { data } = await api.get(`/api/data-sources/${id}/schema`, {
-      params: { file_keyword: fileKeyword, sheet_name: sheetName },
+      params: { file: fileKeyword, sheet: sheetName },
     })
     const cols = (data.columns ?? []) as string[]
     columnsByKey.value[key] = cols
     return cols
   }
 
-  return { files, sheetsByFile, columnsByKey, loadFiles, loadSheets, loadColumns }
+  function fileOptions() {
+    return files.value.map((f) => ({
+      label: f.label ?? f.file_label ?? f.keyword,
+      value: f.keyword,
+    }))
+  }
+
+  async function sheetOptions(fileKeyword: string) {
+    const sheets = await loadSheets(fileKeyword)
+    return sheets.map((s) => ({ label: s, value: s }))
+  }
+
+  async function columnOptions(fileKeyword: string, sheetName: string) {
+    const cols = await loadColumns(fileKeyword, sheetName)
+    return cols.map((c) => ({ label: c, value: c }))
+  }
+
+  return {
+    files,
+    loadFiles,
+    loadSheets,
+    loadColumns,
+    fileOptions,
+    sheetOptions,
+    columnOptions,
+  }
 }

@@ -34,7 +34,8 @@ final class Config
 
         $this->databaseUrl = $env('DATABASE_URL', 'sqlite:///./data/autoreport.db');
         $this->uploadDir = $env('UPLOAD_DIR', $root . '/data/uploads');
-        $this->filesDir = $env('FILES_DIR', dirname($root) . '/files');
+        $filesFromEnv = trim($env('FILES_DIR', ''));
+        $this->filesDir = $filesFromEnv !== '' ? $filesFromEnv : self::defaultFilesDir($root);
         $this->mysqlHost = $env('MYSQL_HOST', '127.0.0.1');
         $this->mysqlPort = (int) $env('MYSQL_PORT', '3306');
         $this->mysqlUser = $env('MYSQL_USER', 'autoreport');
@@ -51,5 +52,24 @@ final class Config
     public static function rootDir(): string
     {
         return dirname(__DIR__);
+    }
+
+    /**
+     * 默认模板目录：优先含 日报模板.xlsx 的路径。
+     * vue-php/backend → 先试 vue-php/files，再回退仓库根 files/（与 Python ./files 一致）。
+     */
+    private static function defaultFilesDir(string $root): string
+    {
+        $template = '日报模板.xlsx';
+        $candidates = [
+            dirname($root) . '/files',
+            dirname(dirname($root)) . '/files',
+        ];
+        foreach ($candidates as $dir) {
+            if (is_file($dir . DIRECTORY_SEPARATOR . $template)) {
+                return $dir;
+            }
+        }
+        return $candidates[0];
     }
 }
