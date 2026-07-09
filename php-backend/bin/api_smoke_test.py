@@ -118,8 +118,9 @@ def main() -> int:
     from datetime import date, timedelta
 
     report_date = (date.today() - timedelta(days=1)).isoformat()
+    store_name = "平衡贴美国本土店铺"
     payload = json.dumps(
-        {"data_source_id": ds_id, "report_date": report_date, "store_name": "", "is_test": True}
+        {"data_source_id": ds_id, "report_date": report_date, "store_name": store_name, "is_test": True}
     ).encode("utf-8")
     code, hdrs, body = req(
         "POST",

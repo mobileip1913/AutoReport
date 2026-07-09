@@ -1278,8 +1278,8 @@ async function openModal(mode, mappingId = null, opts = {}) {
   currentMappingId = mappingId;
   const modal = document.getElementById('mappingModal');
   const alreadyOpen = window.AppModal?.isOpen(modal);
-  document.getElementById('newMappingFields').classList.toggle('hidden', mode !== 'create');
-  document.getElementById('btnDeleteMapping').classList.toggle('hidden', mode !== 'edit');
+  document.getElementById('newMappingFields')?.classList.toggle('hidden', mode !== 'create');
+  document.getElementById('btnDeleteMapping')?.classList.toggle('hidden', mode !== 'edit');
 
   if (!alreadyOpen) {
     openWithTransition(modal);
@@ -1505,7 +1505,32 @@ document.addEventListener('DOMContentLoaded', () => {
   document.body.addEventListener('click', (e) => {
     const btn = e.target.closest('.btn-edit');
     if (!btn || btn.closest('#formulaModal')) return;
-    openModal('edit', parseInt(btn.dataset.id, 10)).catch(() => {});
+    openModal('edit', parseInt(btn.dataset.id, 10)).catch((err) => {
+      toast(err?.message || '打开配置失败', false);
+    });
+  });
+  document.body.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.btn-delete-mapping');
+    if (!btn) return;
+    const id = parseInt(btn.dataset.id, 10);
+    if (!id) return;
+    const label = btn.dataset.label || '该字段';
+    const ok = await (window.appConfirm?.({
+      title: '删除日报字段',
+      message: `确定删除「${label}」？删除后需重新配置取数规则。`,
+      confirmText: '删除',
+      danger: true,
+    }) ?? Promise.resolve(confirm(`确定删除「${label}」？`)));
+    if (!ok) return;
+    const res = await fetch(`/api/mappings/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast(data.detail || '删除失败', false);
+      return;
+    }
+    toast('已删除');
+    await refreshReuseFields();
+    setTimeout(() => location.reload(), 600);
   });
   document.querySelectorAll('.mapping-tab').forEach((btn) => {
     btn.addEventListener('click', () => onTabClick(btn.dataset.tab));
@@ -1544,5 +1569,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 window.openMappingModal = (mappingId) => {
-  openModal('edit', mappingId).catch(() => {});
+  openModal('edit', mappingId).catch((err) => {
+    toast(err?.message || '打开配置失败', false);
+  });
 };

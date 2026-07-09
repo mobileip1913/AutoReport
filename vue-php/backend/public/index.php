@@ -11,7 +11,7 @@ use Slim\Factory\AppFactory;
 
 require dirname(__DIR__) . '/vendor/autoload.php';
 
-// PHP 内建服务器：静态文件直接放行
+// PHP 内建服务器：静态文件（/app/assets、/static 等）直接放行
 if (PHP_SAPI === 'cli-server') {
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
     $file = __DIR__ . $path;
@@ -24,7 +24,6 @@ $app = AppFactory::create();
 $app->addBodyParsingMiddleware();
 $app->addRoutingMiddleware();
 
-// 与 FastAPI 一致的错误输出：{"detail": "..."}
 $errorMiddleware = $app->addErrorMiddleware(true, true, true);
 $errorMiddleware->setDefaultErrorHandler(function (
     ServerRequestInterface $request,
@@ -51,27 +50,52 @@ $errorMiddleware->setDefaultErrorHandler(function (
 $pages = new PagesController();
 $api = new ApiController();
 
-// ---------- 页面路由（routers/pages.py 对等） ----------
+$spaIndex = __DIR__ . '/app/index.html';
+$serveSpa = function (ServerRequestInterface $request, ResponseInterface $response) use ($spaIndex): ResponseInterface {
+    if (!is_file($spaIndex)) {
+        throw new HttpError(503, 'Vue 前端未构建。请在 frontend 目录执行: npm install && npm run build');
+    }
+    $response->getBody()->write((string) file_get_contents($spaIndex));
+    return $response->withHeader('Content-Type', 'text/html; charset=utf-8');
+};
+
+$redirect = fn(string $to) => function (ServerRequestInterface $request, ResponseInterface $response) use ($to): ResponseInterface {
+    return $response->withHeader('Location', $to)->withStatus(302);
+};
+
+// ---------- 根路径 → Vue SPA ----------
+$app->get('/', $redirect('/app/'));
+$app->get('/app', $serveSpa);
+$app->get('/app/', $serveSpa);
+$app->get('/app/{routes:.+}', $serveSpa);
+
+// ---------- 旧 Twig 路径重定向到 SPA ----------
+$app->get('/mappings', $redirect('/app/mappings'));
+$app->get('/daily', function (ServerRequestInterface $request, ResponseInterface $response): ResponseInterface {
+    $q = $request->getUri()->getQuery();
+    $target = '/app/daily' . ($q !== '' ? '?' . $q : '');
+    return $response->withHeader('Location', $target)->withStatus(302);
+});
 $app->post('/demo/switch-account', [$pages, 'switchAccount']);
 $app->post('/demo/switch-store', [$pages, 'switchStore']);
-$app->get('/', [$pages, 'dashboard']);
-$app->get('/templates', [$pages, 'templatesRedirect']);
-$app->get('/templates/{template_id:[0-9]+}', [$pages, 'templatesRedirect']);
-$app->post('/templates/{template_id:[0-9]+}/test', [$pages, 'testTemplate']);
-$app->post('/templates/{template_id:[0-9]+}/publish', [$pages, 'publishTemplate']);
-$app->post('/templates/{template_id:[0-9]+}/unpublish', [$pages, 'unpublishTemplate']);
-$app->get('/mappings', [$pages, 'mappings']);
-$app->get('/logs', [$pages, 'logs']);
-$app->get('/reports', [$pages, 'reports']);
-$app->get('/reports/{run_id:[0-9]+}', [$pages, 'reportDetail']);
-$app->get('/daily', [$pages, 'daily']);
+
+// ---------- 文件下载 / 表单生成（保留，不走 Vue 路由） ----------
 $app->post('/daily/generate', [$pages, 'dailyGenerate']);
 $app->get('/daily/review-template', [$pages, 'dailyReviewTemplate']);
+$app->get('/daily/review-logistics-template', [$pages, 'dailyReviewLogisticsTemplate']);
+$app->get('/daily/sample-template', [$pages, 'dailySampleTemplate']);
 $app->get('/daily/{run_id:[0-9]+}/export-sku', [$pages, 'dailyExportSku']);
 $app->get('/daily/{run_id:[0-9]+}/export', [$pages, 'dailyExport']);
-$app->get('/imports', [$pages, 'importsRedirect']);
 
-// ---------- API 路由（routers/api.py 对等） ----------
+// ---------- SPA Bootstrap API ----------
+$app->get('/api/session', [$api, 'getSession']);
+$app->get('/api/dashboard/bootstrap', [$api, 'getDashboardBootstrap']);
+$app->get('/api/mappings/bootstrap', [$api, 'getMappingsBootstrap']);
+$app->get('/api/daily/bootstrap', [$api, 'getDailyBootstrap']);
+$app->post('/api/session/account', [$api, 'switchSessionAccount']);
+$app->post('/api/session/store', [$api, 'switchSessionStore']);
+
+// ---------- 业务 API ----------
 $app->post('/api/import', [$api, 'importExcel']);
 $app->post('/api/generate', [$api, 'generate']);
 $app->get('/api/data-sources/{data_source_id:[0-9]+}/report-lines', [$api, 'listReportLines']);
@@ -93,5 +117,9 @@ $app->put('/api/data-sources/{data_source_id:[0-9]+}/settings', [$api, 'updateDa
 $app->get('/api/data-sources/{data_source_id:[0-9]+}/config/export', [$api, 'exportDataSourceConfig']);
 $app->get('/api/data-sources/{data_source_id:[0-9]+}/review-orders/template', [$api, 'downloadReviewTemplate']);
 $app->post('/api/data-sources/{data_source_id:[0-9]+}/review-orders/import', [$api, 'importReviewOrders']);
+$app->get('/api/data-sources/{data_source_id:[0-9]+}/review-logistics/template', [$api, 'downloadReviewLogisticsTemplate']);
+$app->post('/api/data-sources/{data_source_id:[0-9]+}/review-logistics/import', [$api, 'importReviewLogistics']);
+$app->get('/api/data-sources/{data_source_id:[0-9]+}/sample-orders/template', [$api, 'downloadSampleTemplate']);
+$app->post('/api/data-sources/{data_source_id:[0-9]+}/sample-orders/import', [$api, 'importSampleOrders']);
 
 $app->run();

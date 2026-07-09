@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Database;
+use App\Services\DsSettings;
 
 /**
  * Demo 账号 / 店铺种子：仅保留美宠真实店铺。
@@ -81,17 +82,37 @@ final class DemoAccounts
 
     private static function ensureStoreRecord(string $name, string $platform, int $dataSourceId): array
     {
+        $ds = Database::fetchOne('SELECT * FROM data_sources WHERE id = ?', [$dataSourceId]);
+        $cfg = $ds ? DsSettings::getDsConfig($ds) : [];
+        $productionStoreId = $cfg['production_store_id'] ?? null;
+        $shopCode = $cfg['shop_code'] ?? null;
+
         $store = Database::fetchOne('SELECT * FROM stores WHERE data_source_id = ?', [$dataSourceId]);
         if ($store) {
-            Database::updateById('stores', (int) $store['id'], ['name' => $name, 'platform' => $platform]);
+            $patch = ['name' => $name, 'platform' => $platform];
+            if ($productionStoreId !== null && $productionStoreId !== '') {
+                $patch['production_store_id'] = (int) $productionStoreId;
+            }
+            if (is_string($shopCode) && $shopCode !== '') {
+                $patch['shop_code'] = $shopCode;
+            }
+            Database::updateById('stores', (int) $store['id'], $patch);
             return Database::fetchOne('SELECT * FROM stores WHERE id = ?', [(int) $store['id']]);
         }
-        $id = Database::insert('stores', [
+
+        $row = [
             'name' => $name,
             'platform' => $platform,
             'data_source_id' => $dataSourceId,
             'created_at' => Database::utcNow(),
-        ]);
+        ];
+        if ($productionStoreId !== null && $productionStoreId !== '') {
+            $row['production_store_id'] = (int) $productionStoreId;
+        }
+        if (is_string($shopCode) && $shopCode !== '') {
+            $row['shop_code'] = $shopCode;
+        }
+        $id = Database::insert('stores', $row);
         return Database::fetchOne('SELECT * FROM stores WHERE id = ?', [$id]);
     }
 

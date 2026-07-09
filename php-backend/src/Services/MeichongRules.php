@@ -79,6 +79,9 @@ final class MeichongRules
             'review_logistics_mode' => 'per_order_fixed',
             'review_logistics_per_order' => 1,
             'review_logistics_exclude_same_day_refund' => true,
+            'fact_schema' => 'production',
+            'production_store_id' => 3,
+            'shop_code' => 'USLCQPEV3N',
             'meta' => ['项目' => '美宠', '平台' => 'TikTok', '区域' => '美国', '店铺名称' => '平衡贴美国本土店铺'],
         ];
     }

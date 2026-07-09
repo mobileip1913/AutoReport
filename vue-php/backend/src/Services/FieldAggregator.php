@@ -184,6 +184,18 @@ final class FieldAggregator
                 $sampleIds[(string) $oid] = true;
             }
         }
+        foreach (($cfg['sample_orders'] ?? []) as $row) {
+            $oid = trim((string) ($row['order_id'] ?? ''));
+            if ($oid !== '') {
+                $sampleIds[$oid] = true;
+            }
+        }
+        foreach (($cfg['sample_order_ids'] ?? []) as $x) {
+            $oid = trim((string) $x);
+            if ($oid !== '') {
+                $sampleIds[$oid] = true;
+            }
+        }
         $reviewIds = [];
         foreach (($cfg['review_order_ids'] ?? []) as $x) {
             $reviewIds[trim((string) $x)] = true;

@@ -1,16 +1,48 @@
-# AutoReport Vue + PHP
+# AutoReport Vue + PHP（独立可拷贝套件）
 
-独立于仓库内 **Twig 版 `php-backend/`** 与 **Python `app/`** 的一套前后端分离工程。
+整包 **`vue-php/`** 可复制到任意目录单独部署，不依赖仓库内 `app/`、`php-backend/`。
 
-| 组件 | 目录 | 默认端口 |
-|------|------|----------|
-| Vue 3 前端 | `frontend/` | **5173**（开发） |
-| PHP API + 静态托管 | `backend/` | **8091** |
+| 组件 | 目录 | 说明 |
+|------|------|------|
+| Vue 3 前端 | `frontend/` | Naive UI + Pinia，生产 build → `backend/public/app/` |
+| PHP API | `backend/` | Slim 4，端口 **8091** |
+| Excel 模板 | `files/` | 可选，`.env` 中 `FILES_DIR` |
 
-原有服务不受影响：
+**技术选型（已定）**
 
-- Python FastAPI：`8081`（`app/`）
-- Twig PHP：`8090`（`php-backend/`）
+- UI：**Naive UI**
+- 生产路径：**`/app/`**（访问 `http://host:8091/app/`）
+- 鉴权：Cookie + axios `withCredentials`
+
+---
+
+## 独立部署（推荐）
+
+```powershell
+# 1. 拷贝整个 vue-php 目录到目标机器
+# 2. 安装 + 构建
+cd vue-php
+.\scripts\install.ps1
+
+# 3. 编辑 backend\.env 填写 MySQL
+
+# 4. 启动（单端口，含 Vue）
+.\scripts\serve.ps1
+# → http://127.0.0.1:8091/app/
+```
+
+`install.ps1` 会：`composer install` → `php bin/init.php` → `npm install` → `npm run build`。
+
+---
+
+## 开发（双进程）
+
+```powershell
+.\scripts\dev.ps1
+```
+
+- Vue：**http://127.0.0.1:5173/app/**（Vite 代理 `/api` → 8091）
+- API：**http://127.0.0.1:8091**
 
 ---
 
@@ -18,90 +50,55 @@
 
 ```
 vue-php/
-├── frontend/          # Vue 3 + Vite + TypeScript
-│   ├── src/
-│   └── vite.config.ts # 开发代理 /api → 8091；build → backend/public/app/
-├── backend/           # Slim 4 + PDO（自 php-backend 复制，独立演进）
+├── frontend/          # Vue 源码（Vite base=/app/）
+├── backend/
 │   ├── public/
+│   │   ├── index.php  # API + SPA fallback
+│   │   └── app/       # npm run build 产物（勿手改）
 │   ├── src/
 │   └── bin/
-├── files/             # Excel 日报模板（可选，见 FILES_DIR）
-├── docs/              # 迁移与实现文档
-└── README.md
+│       ├── init.php
+│       └── api_smoke_test.py
+├── files/
+├── scripts/
+│   ├── install.ps1    # 一键安装
+│   ├── serve.ps1      # 生产单端口
+│   └── dev.ps1        # 开发双进程
+└── docs/
+    └── Vue迁移Checklist.md
 ```
-
-整包 **`vue-php/`** 可复制到任意目录单独部署；与 AutoReport 主仓库解耦。
 
 ---
 
-## 快速开始
-
-### 1. 后端
+## API 冒烟
 
 ```powershell
-cd vue-php\backend
-copy .env.example .env
-# 编辑 .env 填写 MySQL（可与主项目共用库）
-
-composer install
-php bin\init.php
-php -S 0.0.0.0:8091 -t public
+cd backend
+php bin/init.php
+# 另开终端先 serve.ps1 或 dev.ps1
+python bin\api_smoke_test.py
 ```
-
-### 2. 前端（另开终端）
-
-```powershell
-cd vue-php\frontend
-npm install
-npm run dev
-```
-
-浏览器打开：**http://127.0.0.1:5173/**
-
-### 3. 生产构建（单端口）
-
-```powershell
-cd vue-php\frontend
-npm run build
-# 产物在 backend/public/app/
-
-cd ..\backend
-php -S 0.0.0.0:8091 -t public
-# 访问 http://127.0.0.1:8091/app/ （需后续在 index.php 配置 SPA fallback）
-```
-
-开发期推荐 **5173 + 8091** 双进程；生产再将 Vue build 进 `public/app/` 并由 PHP 统一对外。
 
 ---
 
-## 与主仓库的关系
+## 与主仓库关系
 
-| 项 | 说明 |
-|----|------|
-| 数据库 | 可共用 `autoreport` MySQL；表结构由 `bin/init.php` 维护 |
-| 业务逻辑 | 初期从 `php-backend` 复制；之后在 `vue-php/backend` 独立改 |
-| 前端 | **全新 Vue**，不修改 `php-backend/templates` 与 `public/static/*.js` |
-| Python | 完全不依赖；ETL 仍用主仓库 `scripts/` 灌数 |
+| 工程 | 用途 |
+|------|------|
+| `app/` (8081) | Python 参考实现 |
+| `php-backend/` (8090) | Twig 过渡版（对照用） |
+| **`vue-php/` (8091)** | **Vue 默认前端（本套件）** |
+
+数据库可与主项目共用 `autoreport` MySQL；表由 `backend/bin/init.php` 维护。
 
 ---
 
 ## 迁移进度
 
-- [x] 独立目录与端口
-- [x] Vue 路由骨架（概览 / 报表配置 / 日报输出）
-- [x] API 客户端 + 开发代理
-- [ ] `GET /api/session`、`/api/mappings/bootstrap` 等读接口
-- [ ] 报表配置页组件（MappingModal、DsSettings…）
-- [ ] 日报编辑器
+见 [docs/Vue迁移Checklist.md](docs/Vue迁移Checklist.md)。
 
-详见 [docs/Vue前端迁移计划.md](docs/Vue前端迁移计划.md)。
-
----
-
-## 一键启动（Windows）
-
-```powershell
-.\scripts\dev.ps1
-```
-
-（同时启动 PHP 8091 与 Vite 5173；见 `scripts/dev.ps1`。）
+- [x] 独立目录、`/app/` 构建、SPA fallback
+- [x] Backend 镜像 + Bootstrap API（session / mappings / daily）
+- [x] Naive UI + Pinia + 三页初版（bootstrap 驱动）
+- [ ] MappingModal / DailyEditor 完整迁移
+- [ ] 全链路 browser-act 验收

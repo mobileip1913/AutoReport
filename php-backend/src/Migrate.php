@@ -18,6 +18,7 @@ final class Migrate
         self::ensureReportRunColumns();
         self::ensureFieldMappingReportColumns();
         self::ensureReportValueColumns();
+        self::ensureStoreColumns();
     }
 
     private static function ddl(string $mysql, string $sqlite): string
@@ -279,5 +280,11 @@ final class Migrate
         self::addColumnIfMissing('report_values', 'mapping_id', 'INTEGER');
         self::addColumnIfMissing('report_values', 'computed_raw_value', Database::isSqlite() ? 'FLOAT' : 'DOUBLE');
         self::addColumnIfMissing('report_values', 'is_overridden', 'BOOLEAN DEFAULT 0');
+    }
+
+    private static function ensureStoreColumns(): void
+    {
+        self::addColumnIfMissing('stores', 'production_store_id', 'INTEGER');
+        self::addColumnIfMissing('stores', 'shop_code', 'VARCHAR(50)');
     }
 }

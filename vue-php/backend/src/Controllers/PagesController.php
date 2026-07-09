@@ -13,6 +13,8 @@ use App\Services\MappingRepo;
 use App\Services\MappingUtils;
 use App\Services\MeichongRules;
 use App\Services\ReportEngine;
+use App\Services\ReviewImport;
+use App\Services\SampleImport;
 use App\Services\SchemaService;
 use App\Services\SkuExport;
 use App\Views;
@@ -55,14 +57,14 @@ final class PagesController
     {
         $body = (array) $request->getParsedBody();
         $accountId = (int) ($body['account_id'] ?? 0);
-        $nextUrl = (string) ($body['next_url'] ?? '/mappings');
+        $nextUrl = (string) ($body['next_url'] ?? '/app/mappings');
 
         $account = Database::fetchOne('SELECT * FROM accounts WHERE id = ?', [$accountId]);
         if (!$account) {
             throw new HttpError(404, '账号不存在');
         }
         $stores = AccountContext::storesForAccount($accountId);
-        $target = str_starts_with($nextUrl, '/') ? $nextUrl : '/mappings';
+        $target = str_starts_with($nextUrl, '/') ? $nextUrl : '/app/mappings';
         $resp = $this->redirect($response, $target);
         $resp = $this->withCookie($resp, AccountContext::ACCOUNT_COOKIE, (string) $accountId, 60 * 60 * 24 * 30);
         if ($stores) {
@@ -75,7 +77,7 @@ final class PagesController
     {
         $body = (array) $request->getParsedBody();
         $storeId = (int) ($body['store_id'] ?? 0);
-        $nextUrl = (string) ($body['next_url'] ?? '/mappings');
+        $nextUrl = (string) ($body['next_url'] ?? '/app/mappings');
 
         $account = AccountContext::resolveCurrentAccount($request->getCookieParams());
         $store = Database::fetchOne(
@@ -86,7 +88,7 @@ final class PagesController
         if (!$store) {
             throw new HttpError(403, '当前账号无权访问该店铺');
         }
-        $target = str_starts_with($nextUrl, '/') ? $nextUrl : '/mappings';
+        $target = str_starts_with($nextUrl, '/') ? $nextUrl : '/app/mappings';
         $resp = $this->redirect($response, $target);
         return $this->withCookie($resp, AccountContext::STORE_COOKIE, (string) $storeId, 60 * 60 * 24 * 30);
     }
@@ -192,6 +194,7 @@ final class PagesController
                     'name' => MappingUtils::mappingLabel($m),
                     'mapping_id' => (int) $m['id'],
                     'configured' => !empty($m['parts']) || (!empty($m['sheet_name']) && !empty($m['column_header'])),
+                    'source_files' => MappingUtils::mappingSourceFileKeywords($m),
                 ];
             }
         }
@@ -215,6 +218,7 @@ final class PagesController
                 'is_manual' => MappingUtils::isManualLine($m),
                 'label' => MappingUtils::mappingLabel($m),
                 'line_code' => MappingUtils::mappingLineCode($m),
+                'field_type' => MappingUtils::fieldDisplayType($m),
             ];
             if ((int) ($m['sort_order'] ?? 0) <= 0 && empty($m['report_group'])) {
                 $auxiliary[$dsId][] = $item;
@@ -236,6 +240,14 @@ final class PagesController
             $dsSettings[$dsId] = DsSettings::serializeDsSettings($ds);
         }
 
+        $fileLabelsByDs = SchemaService::fileLabelsFromMeta($meta);
+        $fieldLabelsByDs = [];
+        foreach ($dataSources as $ds) {
+            $dsId = (int) $ds['id'];
+            $dsMappings = array_values(array_filter($mappings, fn($m) => (int) $m['data_source_id'] === $dsId));
+            $fieldLabelsByDs[$dsId] = MappingUtils::buildFieldLabelsMap($dsMappings, $fields);
+        }
+
         return $this->html($response, $this->render('mappings.html.twig', $request, [
             'mappings' => $mappings,
             'grouped' => $grouped,
@@ -248,8 +260,12 @@ final class PagesController
             'store_by_ds_id' => $storeByDsId,
             'excel_templates' => DailyReport::listExcelTemplates(),
             'meta_json' => json_encode($meta, JSON_UNESCAPED_UNICODE),
+            'file_labels_by_ds' => $fileLabelsByDs,
+            'field_labels_by_ds' => $fieldLabelsByDs,
             'reuse_fields_json' => json_encode($reuseFields, JSON_UNESCAPED_UNICODE),
             'pending_file_codes' => MeichongRules::PENDING_FILE_CODES,
+            'review_import_codes' => MeichongRules::REVIEW_IMPORT_CODES,
+            'review_logistics_codes' => MeichongRules::REVIEW_LOGISTICS_CODES,
             'ds_settings_json' => json_encode($dsSettings, JSON_UNESCAPED_UNICODE),
             'ds_settings' => $dsSettings,
             'modal_stores' => $accessibleStores,
@@ -303,6 +319,8 @@ final class PagesController
 
         if ($run) {
             $activeDsId = $run['data_source_id'] ? (int) $run['data_source_id'] : $this->runSourceId($run);
+        } elseif (!empty($ctx['current_store']['data_source_id'])) {
+            $activeDsId = (int) $ctx['current_store']['data_source_id'];
         } elseif ($dailySources) {
             $activeDsId = (int) $dailySources[0]['id'];
         }
@@ -359,15 +377,45 @@ final class PagesController
         }
 
         $ctx = AccountContext::pageContext($request->getCookieParams());
+        $defaultReportDate = $run
+            ? (string) $run['report_date']
+            : (new \DateTimeImmutable('yesterday', new \DateTimeZone('Asia/Shanghai')))->format('Y-m-d');
+
+        $storeByDsId = [];
+        foreach ($ctx['accessible_stores'] ?? [] as $store) {
+            if (!empty($store['data_source_id'])) {
+                $storeByDsId[(int) $store['data_source_id']] = $store;
+            }
+        }
+
+        $fileLabelsByDs = [];
+        $fieldLabelsByDs = [];
+        try {
+            $metaForLabels = $ds
+                ? SchemaService::getAllMeta([$ds])
+                : SchemaService::getAllMeta($dailySources);
+            $fileLabelsByDs = SchemaService::fileLabelsFromMeta($metaForLabels);
+        } catch (\Throwable) {
+            $fileLabelsByDs = [];
+        }
+        if ($activeDsId && $mappings) {
+            $fieldLabelsByDs[$activeDsId] = MappingUtils::buildFieldLabelsMap($mappings, $modalFields);
+        }
 
         return $this->html($response, $this->render('daily.html.twig', $request, [
             'template' => $template,
             'daily_sources' => $dailySources,
+            'accessible_stores' => $ctx['accessible_stores'] ?? [],
+            'current_store' => $ctx['current_store'] ?? null,
+            'store_by_ds_id' => $storeByDsId,
             'run' => $run,
             'excel_rows' => $excelRows,
             'meta' => $meta,
             'active_ds_id' => $activeDsId,
+            'default_report_date' => $defaultReportDate,
             'meta_json' => $metaJson,
+            'file_labels_by_ds' => $fileLabelsByDs,
+            'field_labels_by_ds' => $fieldLabelsByDs,
             'reuse_fields_json' => $reuseFieldsJson,
             'modal_data_sources' => $modalDataSources,
             'modal_fields' => $modalFields,
@@ -375,6 +423,8 @@ final class PagesController
             'ds_settings' => $dsSettings,
             'ds_settings_json' => $dsSettingsJson,
             'pending_file_codes' => MeichongRules::PENDING_FILE_CODES,
+            'review_import_codes' => MeichongRules::REVIEW_IMPORT_CODES,
+            'review_logistics_codes' => MeichongRules::REVIEW_LOGISTICS_CODES,
         ]));
     }
 
@@ -420,6 +470,21 @@ final class PagesController
         $cfg = DsSettings::getDsConfig($ds);
         $storeName = (($cfg['meta'] ?? [])['店铺名称'] ?? null) ?: $ds['name'];
         $run = ReportEngine::generateReportForDataSource($dataSourceId, $reportDate, (string) $storeName, true);
+
+        $accept = strtolower($request->getHeaderLine('Accept'));
+        $query = $request->getQueryParams();
+        $wantsJson = str_contains($accept, 'application/json') || (($query['format'] ?? '') === 'json');
+        if ($wantsJson) {
+            $payload = json_encode([
+                'ok' => true,
+                'run_id' => (int) $run['id'],
+                'report_date' => $run['report_date'],
+                'export_url' => '/daily/' . $run['id'] . '/export',
+                'redirect_url' => '/daily?run_id=' . $run['id'],
+            ], JSON_UNESCAPED_UNICODE);
+            $response->getBody()->write($payload ?: '{}');
+            return $response->withHeader('Content-Type', 'application/json; charset=utf-8');
+        }
         return $this->redirect($response, '/daily?run_id=' . $run['id']);
     }
 
@@ -428,11 +493,35 @@ final class PagesController
         $query = $request->getQueryParams();
         $dataSourceId = (int) ($query['data_source_id'] ?? 0);
         AccountContext::assertDataSourceAccess($request->getCookieParams(), $dataSourceId);
-        $content = \App\Services\ReviewImport::buildReviewTemplateBytes();
+        $content = ReviewImport::buildReviewTemplateBytes();
         $response->getBody()->write($content);
         return $response
             ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
             ->withHeader('Content-Disposition', 'attachment; filename="review_orders_template.xlsx"');
+    }
+
+    public function dailyReviewLogisticsTemplate(Request $request, Response $response): Response
+    {
+        $query = $request->getQueryParams();
+        $dataSourceId = (int) ($query['data_source_id'] ?? 0);
+        AccountContext::assertDataSourceAccess($request->getCookieParams(), $dataSourceId);
+        $content = ReviewImport::buildReviewLogisticsTemplateBytes();
+        $response->getBody()->write($content);
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', 'attachment; filename="review_logistics_template.xlsx"');
+    }
+
+    public function dailySampleTemplate(Request $request, Response $response): Response
+    {
+        $query = $request->getQueryParams();
+        $dataSourceId = (int) ($query['data_source_id'] ?? 0);
+        AccountContext::assertDataSourceAccess($request->getCookieParams(), $dataSourceId);
+        $content = SampleImport::buildSampleTemplateBytes();
+        $response->getBody()->write($content);
+        return $response
+            ->withHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+            ->withHeader('Content-Disposition', 'attachment; filename="sample_orders_template.xlsx"');
     }
 
     public function dailyExportSku(Request $request, Response $response, array $args): Response

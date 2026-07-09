@@ -17,6 +17,13 @@
     </form>
     {% endif %}
   </div>
+  <div class="flex flex-wrap items-center gap-2 shrink-0">
+    {% set export_ds_id = current_store.data_source_id if current_store else (data_sources[0].id if data_sources|length == 1 else none) %}
+    {% if export_ds_id %}
+    <button type="button" class="btn-export-config px-4 py-2 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700" data-ds-id="{{ export_ds_id }}">导出 JSON</button>
+    {% endif %}
+    <button type="button" class="btn-new-mapping btn-primary text-sm font-medium px-4 py-2 rounded-lg">增加日报字段</button>
+  </div>
 </div>
 
 <div id="toast" class="app-toast hidden" role="status" aria-live="polite"></div>
@@ -42,8 +49,6 @@
             <button type="button" class="btn-open-schedule px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap" data-ds-id="{{ ds.id }}">
               每日自动生成 · <span class="ds-schedule-label">{% if st and st.daily_generate_at %}{{ st.daily_generate_at }}{% else %}未设置{% endif %}</span>
             </button>
-            <button type="button" class="btn-export-config px-3 py-1.5 border border-slate-200 rounded-lg text-sm hover:bg-slate-50 text-slate-700 whitespace-nowrap" data-ds-id="{{ ds.id }}">导出 JSON</button>
-            <button type="button" class="btn-new-mapping btn-primary text-sm font-medium px-4 py-1.5 rounded-lg whitespace-nowrap">增加日报字段</button>
             <button type="button" class="btn-save-ds-settings px-4 py-1.5 btn-primary text-sm whitespace-nowrap">保存</button>
           </div>
         </div>
@@ -73,7 +78,7 @@
         <span class="section-table-title">日报字段</span>
         <span class="section-table-count">{{ excel_rows|length }}</span>
       </div>
-      <span class="section-table-hint" title="在日报输出页可拖动调整列顺序">顺序与日报页同步</span>
+      <span class="section-table-hint" title="在日报输出页可拖动调整列顺序">可在日报输出页修改顺序</span>
     </div>
     <table class="w-full text-sm min-w-[860px] app-table">
       <thead class="bg-slate-50 text-left text-slate-500 text-xs">
@@ -195,7 +200,7 @@
 <script src="/static/app_modal.js?v=20260708v"></script>
 <script src="/static/form_controls.js?v=20260709b"></script>
 <script src="/static/mappings_settings.js?v=20260709a"></script>
-<script src="/static/mapping_modal.js?v=20260709a"></script>
+<script src="/static/mapping_modal.js?v=20260709b"></script>
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const hash = location.hash;

@@ -33,8 +33,18 @@ final class FactProvider
             $importFileNames[(int) $s['file_id']] = (string) $s['file_name'];
         }
 
+        [$productionStoreId] = ProductionFact::resolveProductionStore($dataSourceId, $storeName);
+        if ($productionStoreId === null) {
+            return [[], $importFileNames];
+        }
+
         $rows = [];
         foreach ($sheets as $s) {
+            $factTable = (string) $s['fact_table'];
+            if (!ProductionFact::isProductionFactTable($factTable)) {
+                continue;
+            }
+
             $columns = Database::fetchAll(
                 'SELECT header_name, db_column, column_aliases FROM catalog_columns
                  WHERE sheet_id = ? AND is_active = 1',
@@ -43,26 +53,44 @@ final class FactProvider
             if (!$columns) {
                 continue;
             }
-            $tableCols = Database::tableColumns((string) $s['fact_table']);
+
+            $tableCols = Database::tableColumns($factTable);
             $tableColSet = array_flip($tableCols);
             $activeCols = array_values(array_filter($columns, fn($c) => isset($tableColSet[$c['db_column']])));
             if (!$activeCols) {
                 continue;
             }
-            $dbCols = array_merge(['id'], array_map(fn($c) => (string) $c['db_column'], $activeCols));
-            $selectSql = implode(', ', array_map(fn($c) => "`$c`", $dbCols));
-            $factTable = (string) $s['fact_table'];
+
+            $selectCols = ['id'];
+            if (isset($tableColSet['extra_data'])) {
+                $selectCols[] = 'extra_data';
+            }
+            foreach ($activeCols as $col) {
+                $dbCol = (string) $col['db_column'];
+                if (!in_array($dbCol, $selectCols, true)) {
+                    $selectCols[] = $dbCol;
+                }
+            }
+
+            $selectSql = implode(', ', array_map(fn($c) => "`$c`", $selectCols));
             $records = Database::fetchAll(
-                "SELECT {$selectSql} FROM `{$factTable}` WHERE data_source_id = ? AND store_name = ?",
-                [$dataSourceId, $storeName]
+                "SELECT {$selectSql} FROM `{$factTable}` WHERE store_id = ?",
+                [$productionStoreId]
             );
+
+            $headerByDb = [];
+            foreach ($activeCols as $col) {
+                $headerByDb[(string) $col['db_column']] = (string) $col['header_name'];
+            }
+
             foreach ($records as $record) {
-                $rowData = [];
+                $rowData = ProductionFact::expandProductionRecord($record, $factTable, $headerByDb);
                 foreach ($activeCols as $col) {
-                    $val = $record[$col['db_column']] ?? null;
-                    $rowData[(string) $col['header_name']] = $val;
                     foreach (Database::jsonDecode($col['column_aliases'], []) ?: [] as $alias) {
-                        $rowData[(string) $alias] = $val;
+                        $dbCol = (string) $col['db_column'];
+                        if (array_key_exists($dbCol, $record) && $record[$dbCol] !== null) {
+                            $rowData[(string) $alias] = $record[$dbCol];
+                        }
                     }
                 }
                 $rows[] = [
@@ -72,6 +100,7 @@ final class FactProvider
                 ];
             }
         }
+
         return [$rows, $importFileNames];
     }
 }

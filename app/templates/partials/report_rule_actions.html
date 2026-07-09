@@ -2,5 +2,5 @@
 {% set _del_label = (row.label if row is defined else '') or (item.label if item is defined else '') or m.excel_label or m.label or '' %}
 <div class="report-rule-actions">
   <button type="button" class="btn-edit text-link hover:underline text-xs" data-id="{{ m.id }}">配置</button>
-  <button type="button" class="btn-delete-mapping btn-modal-danger btn-modal-danger--compact" data-id="{{ m.id }}" data-label="{{ _del_label }}">删除</button>
+  <button type="button" class="btn-delete-mapping text-link-danger hover:underline text-xs" data-id="{{ m.id }}" data-label="{{ _del_label }}">删除</button>
 </div>

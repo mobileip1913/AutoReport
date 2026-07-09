@@ -90,10 +90,13 @@ final class ReportEngine
         $fieldValues = [];
         $warnings = [];
 
-        // 刷单字段来自 config.review_orders 汇总（与 Python 版 review_field_values 一致）
+        // 刷单 + 样品字段来自 config 汇总（与 Python 版 review_field_values / sample_field_values 一致）
         if ($dailyMode) {
             $sameDayIds = $context?->sameDayRefundOrderIds;
             $fieldValues = ReviewImport::reviewFieldValues($dsConfig, $sameDayIds);
+            foreach (SampleImport::sampleFieldValues($dsConfig) as $code => $val) {
+                $fieldValues[$code] = $val;
+            }
         }
 
         // 迭代求值以支持「复用字段」引用（与 Python 版循环收敛逻辑一致）

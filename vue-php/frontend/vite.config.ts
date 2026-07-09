@@ -2,8 +2,10 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 
-// 开发：Vue 5173，API 代理到 PHP 8091（不与 php-backend:8090 / Python:8081 冲突）
+// 生产 build → backend/public/app/，base=/app/ 单端口部署
+// 开发：5173 代理 API 到 8091
 export default defineConfig({
+  base: '/app/',
   plugins: [vue()],
   resolve: {
     alias: {
